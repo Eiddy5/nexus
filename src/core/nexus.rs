@@ -85,7 +85,7 @@ impl Nexus {
     }
 
     pub async fn handle_connection(&self, socket: WebSocket) {
-        ClientConnection::new(socket);
+        let client_connection = ClientConnection::new(socket);
 
     }
 }
