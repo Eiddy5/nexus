@@ -182,13 +182,13 @@ async fn normal_handle_client_message(
     nexus: &Arc<Nexus>,
     document: &DocumentHandle,
     context: &HookContext,
-    message: &yrs::sync::Message,
+    message: &yrs::sync::YMessage,
 ) {
     match message {
-        yrs::sync::Message::Sync(msg) => match msg {
+        yrs::sync::YMessage::Sync(msg) => match msg {
             SyncMessage::SyncStep1(sv) => {
                 let diff = document.doc().encode_state_as_update(sv);
-                let reply = yrs::sync::Message::Sync(SyncMessage::SyncStep2(diff));
+                let reply = yrs::sync::YMessage::Sync(SyncMessage::SyncStep2(diff));
             }
             SyncMessage::SyncStep2(update) => {
                 document.doc().apply_update(update).unwrap();
@@ -203,9 +203,9 @@ async fn normal_handle_client_message(
                 document.doc().apply_update(update).unwrap();
             }
         },
-        yrs::sync::Message::Auth(_) => {}
-        yrs::sync::Message::AwarenessQuery => {}
-        yrs::sync::Message::Awareness(awarenessUpdate) => {}
-        yrs::sync::Message::Custom(_, _) => {}
+        yrs::sync::YMessage::Auth(_) => {}
+        yrs::sync::YMessage::AwarenessQuery => {}
+        yrs::sync::YMessage::Awareness(awarenessUpdate) => {}
+        yrs::sync::YMessage::Custom(_, _) => {}
     }
 }

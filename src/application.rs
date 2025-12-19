@@ -62,23 +62,22 @@ async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    debug!("{:} 正在建立连接... ", doc_id);
     let nexus = state.nexus.clone();
-    ws.on_upgrade(move |socket: WebSocket| async move {
-        nexus.handle_connection(socket).await
-    })
+    ws.on_upgrade(
+        move |socket: WebSocket| async move { nexus.handle_connection(doc_id, socket).await },
+    )
 }
 
 pub async fn init_state(config: &Config) -> Result<AppState, Error> {
     let nexus = get_nexus();
     Ok(AppState {
         config: Arc::new(config.clone()),
-        nexus: Arc::new(nexus)
+        nexus: Arc::new(nexus),
     })
 }
 
 fn get_nexus() -> Nexus {
     let setting = default_setting();
     info!("nexus setting: {:?}", setting);
-    Nexus::new(Some(setting),vec![])
+    Nexus::new(Some(setting), vec![])
 }

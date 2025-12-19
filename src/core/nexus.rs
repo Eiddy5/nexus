@@ -1,5 +1,6 @@
 use crate::ServerError;
 use crate::core::config::NexusSetting;
+use crate::core::connection::ClientConnection;
 use crate::core::debounce::Debouncer;
 use crate::core::default_setting;
 use crate::core::document::Document;
@@ -10,7 +11,6 @@ use axum::extract::ws::WebSocket;
 use moka::sync::Cache;
 use std::sync::Arc;
 use std::time::Duration;
-use crate::core::connection::ClientConnection;
 
 #[derive(Clone)]
 pub struct Nexus {
@@ -84,8 +84,7 @@ impl Nexus {
         Ok(())
     }
 
-    pub async fn handle_connection(&self, socket: WebSocket) {
-        let client_connection = ClientConnection::new(socket);
-
+    pub async fn handle_connection(&self, doc_id: String, socket: WebSocket) {
+        let client_connection = ClientConnection::new(doc_id, socket);
     }
 }
