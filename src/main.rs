@@ -1,24 +1,26 @@
 mod application;
+mod backup;
 mod config;
 mod core;
-mod server;
-pub mod state;
+mod errors;
+mod state;
 mod utils;
 
+use crate::application::{Application, init_state};
+use crate::config::get_configuration;
+use crate::utils::env_util::get_env_var;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use crate::application::{init_state, Application};
-use crate::config::get_configuration;
-use crate::utils::env_util::get_env_var;
 
 pub type AwarenessRef = Arc<RwLock<yrs::sync::Awareness>>;
+pub use errors::ServerError;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
-    let log_level = get_env_var("LOG_LEVEL", "info");
+    let log_level = get_env_var("LOG_LEVEL", "debug");
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
         .with(tracing_subscriber::EnvFilter::new(log_level))

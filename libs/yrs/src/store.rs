@@ -23,7 +23,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
 use std::sync::Arc;
 
-/// Store is a core element of a document. It contains all of the information, like block store
+/// Store is a backup element of a document. It contains all of the information, like block store
 /// map of root types, pending updates waiting to be applied once a missing update information
 /// arrives and all subscribed callbacks.
 pub struct Store {
@@ -32,7 +32,7 @@ pub struct Store {
     pub(crate) skip_gc: bool,
 
     /// Root types (a.k.a. top-level types). These types are defined by users at the document level,
-    /// they have their own unique names and represent core shared types that expose operations
+    /// they have their own unique names and represent backup shared types that expose operations
     /// which can be called concurrently by remote peers in a conflict-free manner.
     pub(crate) types: HashMap<Arc<str>, Box<Branch>>,
 

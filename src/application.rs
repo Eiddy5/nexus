@@ -1,15 +1,17 @@
 use crate::config::Config;
-use crate::core::{Nexus, default_configuration};
+use crate::core::{Nexus, default_setting};
 use crate::state::AppState;
 use anyhow::Error;
 use axum::Router;
-use axum::extract::ws::WebSocket;
-use axum::extract::{ConnectInfo, Path, WebSocketUpgrade};
+use axum::extract::ws::{Message, WebSocket};
+use axum::extract::{Path, State, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::get;
-use std::net::SocketAddr;
+use futures::{SinkExt, StreamExt};
+use mpsc::channel;
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio::sync::mpsc;
 use tower_http::trace::TraceLayer;
 use tracing::{debug, info};
 
@@ -58,25 +60,25 @@ async fn health_check() -> impl IntoResponse {
 async fn ws_handler(
     Path(doc_id): Path<String>,
     ws: WebSocketUpgrade,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    debug!("🔗 🔗 🔗 正在建立连接... {:}", doc_id);
-    ws.on_upgrade(move |socket| handle_socket_(doc_id, socket, Some(addr)))
+    debug!("{:} 正在建立连接... ", doc_id);
+    let nexus = state.nexus.clone();
+    ws.on_upgrade(move |socket: WebSocket| async move {
+        nexus.handle_connection(socket).await
+    })
 }
-
-async fn handle_socket_(doc_name: String, socket: WebSocket, peer: Option<SocketAddr>) {}
 
 pub async fn init_state(config: &Config) -> Result<AppState, Error> {
     let nexus = get_nexus();
     Ok(AppState {
         config: Arc::new(config.clone()),
-        // nexus: Arc::new(nexus)
+        nexus: Arc::new(nexus)
     })
 }
 
 fn get_nexus() -> Nexus {
-    let configuration = default_configuration();
-    // info!("nexus_v2 setting: {:?}", configuration);
-
-    Nexus::new(Some(configuration))
+    let setting = default_setting();
+    info!("nexus setting: {:?}", setting);
+    Nexus::new(Some(setting),vec![])
 }

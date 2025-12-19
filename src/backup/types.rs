@@ -1,11 +1,16 @@
-use crate::backup::DocumentHandle;
-use crate::backup::document::DocumentUpdate;
 use async_trait::async_trait;
+use std::net::SocketAddr;
 use std::sync::Arc;
+use uuid::Uuid;
+use crate::backup::document::DocumentUpdate;
+use crate::backup::DocumentHandle;
 
 #[derive(Clone, Debug)]
 pub struct HookContext {
-    pub document_id: String,
+    pub document_name: String,
+    pub socket_id: Uuid,
+    pub peer: Option<SocketAddr>,
+    pub read_only: bool,
     pub authenticated: bool,
     pub token: Option<String>,
 }
@@ -34,8 +39,10 @@ pub struct AwarenessPayload {
 
 #[async_trait]
 pub trait Extension: Send + Sync {
-    // Priority is used to determine the order in which extensions are executed.
-    fn priority(&self) -> u32;
+    async fn on_configure(&self, _configuration_name: Option<String>) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     async fn on_connect(&self, _context: &HookContext) -> anyhow::Result<()> {
         Ok(())
     }

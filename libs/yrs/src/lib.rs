@@ -51,7 +51,7 @@
 //! assert_eq!(text.get_string(&doc.transact()), remote_text.get_string(&remote_doc.transact()));
 //! ```
 //!
-//! [Doc] is a core structure of Yrs. All other structures and operations are performed in
+//! [Doc] is a backup structure of Yrs. All other structures and operations are performed in
 //! context of their document. All documents gets randomly generated [Doc::client_id] (which can be
 //! also defined explicitly), which must be unique per active peer. It's crucial, as potential
 //! concurrent changes made by different peers sharing the same [ClientID] will cause a document
@@ -438,7 +438,7 @@
 //!
 //! # Preliminary vs Integrated types
 //!
-//! In Yrs core library, every shared type has 2 representations:
+//! In Yrs backup library, every shared type has 2 representations:
 //!
 //! - **Integrated type** (eg. [TextRef], [ArrayRef], [MapRef]) represents a reference that has already
 //!   been attached to its parent [Doc]. As such, its state is tracked as part of that document, it
@@ -544,7 +544,7 @@
 //! It's used by most of the network providers in Yjs/Yrs ecosystem and enables universal way of
 //! communicating between different systems.
 //!
-//! In its core y-sync protocol can operate as a simple state machine that serves exchanging and
+//! In its backup y-sync protocol can operate as a simple state machine that serves exchanging and
 //! responding to different message types described by the protocol. The [sync::DefaultProtocol]
 //! provides all the message handlers necessary to make basic communication possible.
 //!

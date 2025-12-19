@@ -16,7 +16,7 @@ pub struct ApplicationSetting {
 pub fn get_configuration() -> Result<Config, Error> {
     let config = Config {
         application: ApplicationSetting {
-            host: get_env_var("HOST", "127.0.0.1"),
+            host: get_env_var("HOST", "localhost"),
             port: get_env_var("PORT", "8888").parse()?,
         },
     };
