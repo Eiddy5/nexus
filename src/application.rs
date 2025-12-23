@@ -1,19 +1,19 @@
 use crate::config::Config;
-use crate::core::{Nexus, default_setting};
+use crate::core::{Nexus, NexusSetting};
 use crate::state::AppState;
 use anyhow::Error;
 use axum::Router;
-use axum::extract::ws::{Message, WebSocket};
+use axum::extract::ws::{WebSocket};
 use axum::extract::{Path, State, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::get;
-use futures::{SinkExt, StreamExt};
-use mpsc::channel;
 use std::sync::Arc;
+use futures_util::StreamExt;
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 use tower_http::trace::TraceLayer;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
+use crate::core::conn::{AxumSink, AxumStream};
 
 pub struct Application {
     listener: TcpListener,
@@ -63,9 +63,18 @@ async fn ws_handler(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     let nexus = state.nexus.clone();
-    ws.on_upgrade(
-        move |socket: WebSocket| async move { nexus.handle_connection(doc_id, socket).await },
-    )
+    let document = nexus.get_or_init_document(&doc_id).await;
+    info!("connecting to doc: {}", doc_id);
+    ws.on_upgrade(move |socket: WebSocket| async move {
+        let (sink, stream) = socket.split();
+        let sink = Arc::new(Mutex::new(AxumSink::from(sink)));
+        let stream = AxumStream::from(stream);
+        let sub = document.subscribe(sink, stream).await;
+        match sub.completed().await {
+            Ok(_) => debug!("👋🏻 👋🏻 👋🏻   客户端连接正常关闭"),
+            Err(e) => debug!("❗❗️❗️️️客户端连接异常断开  error:{}", e),
+        }
+    })
 }
 
 pub async fn init_state(config: &Config) -> Result<AppState, Error> {
@@ -77,7 +86,10 @@ pub async fn init_state(config: &Config) -> Result<AppState, Error> {
 }
 
 fn get_nexus() -> Nexus {
-    let setting = default_setting();
+    let setting = NexusSetting {
+        capacity: 0,
+        time_to_idle: 0,
+    };
     info!("nexus setting: {:?}", setting);
-    Nexus::new(Some(setting), vec![])
+    Nexus::new(&setting)
 }

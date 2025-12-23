@@ -1,21 +1,253 @@
+pub(crate) use crate::AwarenessRef;
+use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use tokio::sync::broadcast::{Sender, channel};
-
-pub type AwarenessRef = Arc<RwLock<yrs::sync::Awareness>>;
+use tokio::sync::broadcast::{Receiver, Sender};
+use tokio::sync::{Mutex, broadcast};
+use tokio::task::JoinHandle;
+use tracing::{debug, error};
+use yrs::encoding::write::Write;
+use yrs::sync::SyncMessage::SyncStep1;
+use yrs::sync::protocol::{MSG_SYNC, MSG_SYNC_UPDATE};
+use yrs::sync::{DefaultProtocol, Error, YMessage, Protocol, SyncMessage};
+use yrs::updates::decoder::Decode;
+use yrs::updates::encoder::{Encode, Encoder, EncoderV1};
+use yrs::{ReadTxn, Transact, Update};
+use crate::core::channel::Channel;
 
 pub struct Document {
-    awareness: AwarenessRef,
+    awareness_sub: yrs::Subscription,
+    doc_sub: yrs::Subscription,
+    awareness_ref: AwarenessRef,
     sender: Sender<Vec<u8>>,
+    receiver: Receiver<Vec<u8>>,
+    awareness_updater: JoinHandle<()>,
 }
 
 unsafe impl Send for Document {}
 unsafe impl Sync for Document {}
 
 impl Document {
-    pub fn new(awareness: AwarenessRef) -> Self {
-        let (sender, receiver) = channel(1024);
+    pub async fn new(
+        awareness: AwarenessRef,
+    ) -> Self {
+        let (sender, receiver) = broadcast::channel(1024);
+        let awareness_c = Arc::downgrade(&awareness);
+        let mut lock = awareness.write().await;
+        let sink = sender.clone();
+        let doc_sub = {
+            lock.doc_mut()
+                .observe_update_v1(move |_txn, u| {
+                    let mut encoder = EncoderV1::new();
+                    encoder.write_var(MSG_SYNC);
+                    encoder.write_var(MSG_SYNC_UPDATE);
+                    encoder.write_buf(&u.update);
+                    let msg = encoder.to_vec();
+                    if let Err(_e) = sink.send(msg) {
+                        // current broadcast group is being closed
+                    }
+                })
+                .unwrap()
+        };
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = sender.clone();
+        let awareness_sub = lock.on_update(move |_, e, _| {
+            let added = e.added();
+            let updated = e.updated();
+            let removed = e.removed();
+            let mut changed = Vec::with_capacity(added.len() + updated.len() + removed.len());
+            changed.extend_from_slice(added);
+            changed.extend_from_slice(updated);
+            changed.extend_from_slice(removed);
 
-        Self { awareness, sender }
+            if let Err(_) = tx.send(changed) {
+                error!("failed to send awareness update");
+            }
+        });
+        drop(lock);
+        let awareness_updater = tokio::task::spawn(async move {
+            while let Some(changed_clients) = rx.recv().await {
+                if let Some(awareness) = awareness_c.upgrade() {
+                    let awareness = awareness.read().await;
+                    match awareness.update_with_clients(changed_clients) {
+                        Ok(update) => {
+                            if let Err(_) = sink.send(YMessage::Awareness(update).encode_v1()) {
+                                error!("couldn't broadcast awareness update");
+                            }
+                        }
+                        Err(e) => {
+                            error!("error while computing awareness update: {}", e)
+                        }
+                    }
+                } else {
+                    return;
+                }
+            }
+        });
+        Document {
+            awareness_ref: awareness,
+            awareness_updater,
+            sender,
+            receiver,
+            awareness_sub,
+            doc_sub,
+        }
+    }
+
+    pub fn awareness(&self) -> &AwarenessRef {
+        &self.awareness_ref
+    }
+
+    pub fn check_and_drop(&self) {
+        if self.receiver.is_empty() && self.sender.is_empty() {
+            self.awareness_updater.abort();
+        }
+    }
+
+    pub async fn subscribe<Sink, Stream, E>(
+        &self,
+        sink: Arc<Mutex<Sink>>,
+        stream: Stream,
+    ) -> Channel
+    where
+        Sink: SinkExt<Vec<u8>> + Send + Sync + Unpin + 'static,
+        Stream: StreamExt<Item = Result<Vec<u8>, E>> + Send + Sync + Unpin + 'static,
+        <Sink as futures_util::Sink<Vec<u8>>>::Error: std::error::Error + Send + Sync,
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        self.subscribe_with(sink, stream, DefaultProtocol).await
+    }
+
+    pub async fn subscribe_with<Sink, Stream, E, P>(
+        &self,
+        sink: Arc<Mutex<Sink>>,
+        mut stream: Stream,
+        protocol: P,
+    ) -> Channel
+    where
+        Sink: SinkExt<Vec<u8>> + Send + Sync + Unpin + 'static,
+        Stream: StreamExt<Item = Result<Vec<u8>, E>> + Send + Sync + Unpin + 'static,
+        <Sink as futures_util::Sink<Vec<u8>>>::Error: std::error::Error + Send + Sync,
+        E: std::error::Error + Send + Sync + 'static,
+        P: Protocol + Send + Sync + 'static,
+    {
+        let sink_task = {
+            let sink = sink.clone();
+            let mut receiver = self.sender.subscribe();
+            tokio::spawn(async move {
+                while let Ok(msg) = receiver.recv().await {
+                    let mut sink = sink.lock().await;
+                    let vec = msg.clone();
+                    if let Err(e) = sink.send(msg).await {
+                        debug!("broadcast failed to sent sync message {:?}", vec);
+                        return Err(Error::Other(Box::new(e)));
+                    }
+                }
+                Ok(())
+            })
+        };
+        let stream_task = {
+            let sink = sink.clone();
+            let awareness = self.awareness().clone();
+            tokio::spawn(async move {
+                while let Some(msg) = stream.next().await {
+                    let msg = YMessage::decode_v1(&msg.map_err(|e| Error::Other(Box::new(e)))?)?;
+                    let reply = Self::handle_msg(&protocol, &awareness, msg).await?;
+                    match reply {
+                        None => {}
+                        Some(reply) => {
+                            let mut sink = sink.lock().await;
+                            sink.send(reply.encode_v1())
+                                .await
+                                .map_err(|e| Error::Other(Box::new(e)))?;
+                        }
+                    }
+                }
+                Ok(())
+            })
+        };
+        let (sv, awareness) = {
+            let sv = self
+                .awareness()
+                .read()
+                .await
+                .doc()
+                .transact()
+                .state_vector();
+            let awareness_update = self.awareness().read().await.update().unwrap();
+            (sv, awareness_update)
+        };
+        {
+            let sink = sink.clone();
+            let mut sink = sink.lock().await;
+            let sync = YMessage::Sync(SyncStep1(sv));
+            self.sender
+                .send(sync.encode_v1())
+                .map_err(|e| Error::Other(Box::new(e)))
+                .unwrap();
+            sink.send(sync.encode_v1())
+                .await
+                .map_err(|e| Error::Other(Box::new(e)))
+                .unwrap();
+        }
+        {
+            let sink = sink.clone();
+            let mut sink = sink.lock().await;
+            sink.send(YMessage::Awareness(awareness).encode_v1())
+                .await
+                .map_err(|e| Error::Other(Box::new(e)))
+                .unwrap();
+        }
+        Channel::new(sink_task, stream_task)
+    }
+
+    async fn handle_msg<P: Protocol>(
+        protocol: &P,
+        awareness: &AwarenessRef,
+        msg: YMessage,
+    ) -> Result<Option<YMessage>, Error> {
+        match msg {
+            YMessage::Sync(msg) => match msg {
+                SyncMessage::SyncStep1(state_vector) => {
+                    let awareness = awareness.read().await;
+                    debug!("receive state_vector {:?}", state_vector.encode_v1());
+                    let result = protocol.handle_sync_step1(&*awareness, state_vector);
+                    result
+                }
+                SyncMessage::SyncStep2(update) => {
+                    let mut awareness = awareness.write().await;
+                    let update = Update::decode_v1(&update)?;
+                    debug!("apply diff update {}", update);
+                    protocol.handle_sync_step2(&mut *awareness, update)
+                }
+                SyncMessage::Update(update) => {
+                    let mut awareness = awareness.write().await;
+                    debug!("receive update {:?}", update);
+                    let update = Update::decode_v1(&update)?;
+                    protocol.handle_sync_step2(&mut *awareness, update)
+                }
+            },
+            YMessage::Auth(deny_reason) => {
+                let awareness = awareness.read().await;
+                protocol.handle_auth(&*awareness, deny_reason)
+            }
+            YMessage::AwarenessQuery => {
+                let awareness = awareness.read().await;
+                protocol.handle_awareness_query(&*awareness)
+            }
+            YMessage::Awareness(update) => {
+                let mut awareness = awareness.write().await;
+                protocol.handle_awareness_update(&mut *awareness, update)
+            }
+            YMessage::Custom(tag, data) => {
+                let mut awareness = awareness.write().await;
+                protocol.missing_handle(&mut *awareness, tag, data)
+            }
+        }
+    }
+}
+
+impl Drop for Document {
+    fn drop(&mut self) {
+        self.awareness_updater.abort();
     }
 }

@@ -15,7 +15,6 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 pub type AwarenessRef = Arc<RwLock<yrs::sync::Awareness>>;
-pub use errors::ServerError;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

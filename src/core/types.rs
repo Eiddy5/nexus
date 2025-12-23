@@ -1,64 +1,39 @@
-use crate::backup::DocumentHandle;
-use crate::backup::document::DocumentUpdate;
-use async_trait::async_trait;
-use std::sync::Arc;
+use std::pin::Pin;
 
-#[derive(Clone, Debug)]
-pub struct HookContext {
-    pub document_id: String,
-    pub authenticated: bool,
-    pub token: Option<String>,
+macro_rules! optional_async_method {
+    ($name:ident,$payload:ty) => {
+        fn $name(
+            &self,
+        ) -> Option<
+            fn(
+                $payload,
+            ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>>,
+        > {
+            None
+        }
+    };
 }
 
-#[derive(Clone, Debug)]
-pub struct ChangePayload {
-    pub context: HookContext,
-    pub document: DocumentHandle,
-    pub update: DocumentUpdate,
-}
-
-#[derive(Clone, Debug)]
-pub struct StatelessPayload {
-    pub context: HookContext,
-    pub document: DocumentHandle,
-    pub payload: serde_json::Value,
-}
-
-#[derive(Clone, Debug)]
-pub struct AwarenessPayload {
-    pub context: HookContext,
-    pub document: DocumentHandle,
-    pub client_id: u64,
-    pub state: serde_json::Value,
-}
-
-#[async_trait]
 pub trait Extension: Send + Sync {
-    // Priority is used to determine the order in which extensions are executed.
-    fn priority(&self) -> u32;
-    async fn on_connect(&self, _context: &HookContext) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    async fn on_authenticate(&self, _context: &HookContext) -> anyhow::Result<bool> {
-        Ok(true)
-    }
-
-    async fn on_change(&self, _payload: &ChangePayload) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    async fn on_awareness_update(&self, _payload: &AwarenessPayload) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    async fn on_stateless(&self, _payload: &StatelessPayload) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    async fn on_disconnect(&self, _context: &HookContext) -> anyhow::Result<()> {
-        Ok(())
-    }
+    // 优先级
+    fn priority(&self) -> Option<u8>;
+    // 扩展名称
+    fn name(&self) -> Option<&str>;
+    optional_async_method!(on_connection, OnConnectionPayload);
+    optional_async_method!(on_create_document, OnCreateDocumentPayload);
+    optional_async_method!(on_load_document, OnLoadDocumentPayload);
+    optional_async_method!(after_load_document, AfterLoadDocumentPayload);
+    optional_async_method!(on_change, OnChangePayload);
 }
 
-pub type SharedExtension = Arc<dyn Extension>;
+#[derive(Debug)]
+pub struct OnCreateDocumentPayload {}
+
+#[derive(Debug)]
+pub struct OnConnectionPayload {}
+
+pub struct OnLoadDocumentPayload {}
+
+pub struct AfterLoadDocumentPayload {}
+
+pub struct OnChangePayload {}
