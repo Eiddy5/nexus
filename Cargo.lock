@@ -721,7 +721,6 @@ dependencies = [
  "dotenvy",
  "futures",
  "futures-util",
- "log",
  "moka",
  "parking_lot",
  "serde",

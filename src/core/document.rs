@@ -1,5 +1,5 @@
 pub(crate) use crate::AwarenessRef;
-use crate::core::channel::Channel;
+use crate::core::connection::Connection;
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::sync::broadcast::{Receiver, Sender};
@@ -7,7 +7,6 @@ use tokio::sync::{Mutex, broadcast};
 use tokio::task::JoinHandle;
 use tracing::{debug, error};
 use yrs::encoding::write::Write;
-use yrs::sync::SyncMessage::SyncStep1;
 use yrs::sync::protocol::{MSG_SYNC, MSG_SYNC_UPDATE};
 use yrs::sync::{DefaultProtocol, Error, Protocol, SyncMessage, YMessage};
 use yrs::updates::decoder::Decode;
@@ -107,7 +106,7 @@ impl Document {
         &self,
         sink: Arc<Mutex<Sink>>,
         stream: Stream,
-    ) -> Channel
+    ) -> Connection
     where
         Sink: SinkExt<Vec<u8>> + Send + Sync + Unpin + 'static,
         Stream: StreamExt<Item = Result<Vec<u8>, E>> + Send + Sync + Unpin + 'static,
@@ -122,7 +121,7 @@ impl Document {
         sink: Arc<Mutex<Sink>>,
         mut stream: Stream,
         protocol: P,
-    ) -> Channel
+    ) -> Connection
     where
         Sink: SinkExt<Vec<u8>> + Send + Sync + Unpin + 'static,
         Stream: StreamExt<Item = Result<Vec<u8>, E>> + Send + Sync + Unpin + 'static,
@@ -140,8 +139,6 @@ impl Document {
                     if let Err(e) = sink.send(update).await {
                         debug!("broadcast failed to sent sync message {:?}", vec);
                         return Err(Error::Other(Box::new(e)));
-                    }else {
-                        debug!("broadcast sent sync message {:?}", vec)
                     }
                 }
                 Ok(())
@@ -178,28 +175,21 @@ impl Document {
             let awareness_update = self.awareness().read().await.update().unwrap();
             (sv, awareness_update)
         };
-        {
-            let sink = sink.clone();
-            let mut sink = sink.lock().await;
-            let sync = YMessage::Sync(SyncStep1(sv));
-            self.sender
-                .send(sync.encode_v1())
-                .map_err(|e| Error::Other(Box::new(e)))
-                .unwrap();
-            sink.send(sync.encode_v1())
-                .await
-                .map_err(|e| Error::Other(Box::new(e)))
-                .unwrap();
-        }
-        {
-            let sink = sink.clone();
-            let mut sink = sink.lock().await;
-            sink.send(YMessage::Awareness(awareness).encode_v1())
-                .await
-                .map_err(|e| Error::Other(Box::new(e)))
-                .unwrap();
-        }
-        Channel::new(sink_task, stream_task)
+        let mut sink = sink.lock().await;
+        let sync = YMessage::Sync(SyncMessage::SyncStep1(sv));
+        self.sender
+            .send(sync.encode_v1())
+            .map_err(|e| Error::Other(Box::new(e)))
+            .unwrap();
+        sink.send(sync.encode_v1())
+            .await
+            .map_err(|e| Error::Other(Box::new(e)))
+            .unwrap();
+        sink.send(YMessage::Awareness(awareness).encode_v1())
+            .await
+            .map_err(|e| Error::Other(Box::new(e)))
+            .unwrap();
+        Connection::new(sink_task, stream_task)
     }
 
     async fn handle_msg<P: Protocol>(
@@ -211,19 +201,16 @@ impl Document {
             YMessage::Sync(msg) => match msg {
                 SyncMessage::SyncStep1(state_vector) => {
                     let awareness = awareness.read().await;
-                    debug!("receive state_vector {:?}", state_vector.encode_v1());
                     let result = protocol.handle_sync_step1(&*awareness, state_vector);
                     result
                 }
                 SyncMessage::SyncStep2(update) => {
                     let mut awareness = awareness.write().await;
                     let update = Update::decode_v1(&update)?;
-                    debug!("apply diff update {}", update);
                     protocol.handle_sync_step2(&mut *awareness, update)
                 }
                 SyncMessage::Update(update) => {
                     let mut awareness = awareness.write().await;
-                    debug!("receive update {:?}", update);
                     let update = Update::decode_v1(&update)?;
                     protocol.handle_sync_step2(&mut *awareness, update)
                 }

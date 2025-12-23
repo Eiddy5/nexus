@@ -1,19 +1,18 @@
 use crate::config::{Config, NexusSetting};
-use crate::core::{Nexus};
+use crate::core::{ Nexus};
 use crate::state::AppState;
 use anyhow::Error;
 use axum::Router;
-use axum::extract::ws::{WebSocket};
+use axum::extract::ws::WebSocket;
 use axum::extract::{Path, State, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use std::sync::Arc;
-use futures_util::StreamExt;
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
 use tower_http::trace::TraceLayer;
-use tracing::{debug, info};
-use crate::core::connection::{AxumSink, AxumStream};
+use tracing::{info};
+use crate::core::types::Extension;
+use crate::extension::store::KVStoreExtension;
 
 pub struct Application {
     listener: TcpListener,
@@ -63,16 +62,8 @@ async fn ws_handler(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     let nexus = state.nexus.clone();
-    let document = nexus.get_or_init_document(&doc_id).await;
     ws.on_upgrade(move |socket: WebSocket| async move {
-        let (sink, stream) = socket.split();
-        let sink = Arc::new(Mutex::new(AxumSink::from(sink)));
-        let stream = AxumStream::from(stream);
-        let sub = document.subscribe(sink, stream).await;
-        match sub.completed().await {
-            Ok(_) => debug!("👋🏻 👋🏻 👋🏻   客户端连接正常关闭"),
-            Err(e) => debug!("❗❗️❗️️️客户端连接异常断开  error:{}", e),
-        }
+        nexus.handle_connection(socket, &doc_id).await;
     })
 }
 
@@ -86,5 +77,8 @@ pub async fn init_state(config: &Config) -> Result<AppState, Error> {
 
 fn get_nexus(nexus_setting: NexusSetting) -> Nexus {
     info!("nexus setting: {:?}", nexus_setting);
-    Nexus::new(&nexus_setting)
+    let extensions:Vec<Arc<dyn Extension>> = vec![
+        Arc::new(KVStoreExtension::new())
+    ];
+    Nexus::new(&nexus_setting, extensions)
 }

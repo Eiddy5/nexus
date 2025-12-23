@@ -1,9 +1,37 @@
 use axum::extract::ws::{Message, WebSocket};
-use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::Stream;
+use futures_util::stream::{SplitSink, SplitStream};
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use tokio::select;
+use tokio::task::JoinHandle;
 use yrs::sync::Error;
+
+pub struct Connection {
+    sink_task: JoinHandle<Result<(), Error>>,
+    stream_task: JoinHandle<Result<(), Error>>,
+}
+
+impl Connection {
+    pub fn new(
+        sink_task: JoinHandle<Result<(), Error>>,
+        stream_task: JoinHandle<Result<(), Error>>,
+    ) -> Self {
+        Self {
+            sink_task,
+            stream_task,
+        }
+    }
+
+    pub async fn completed(self)-> Result<(), Error>{
+        let res = select! {
+            r1 = self.sink_task => r1,
+            r2 = self.stream_task => r2,
+        };
+        res.map_err(|e| Error::Other(e.into()))?
+    }
+
+}
 
 #[repr(transparent)]
 #[derive(Debug)]
@@ -80,8 +108,12 @@ impl Stream for AxumStream {
             Poll::Pending => Poll::Pending,
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Ready(Some(res)) => match res {
-                Ok(item) => Poll::Ready(Some(Ok(item.into()))),
-                Err(e) => Poll::Ready(Some(Err(Error::Other(e.into())))),
+                Ok(Message::Close(_))=>{
+                    Poll::Ready(None)
+                }
+                Ok(item) =>Poll::Ready(Some(Ok(item.into()))),
+                Err(e)=>Poll::Ready(Some(Err(Error::Other(e.into()))))
+
             },
         }
     }

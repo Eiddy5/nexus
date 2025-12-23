@@ -1,5 +1,6 @@
 use crate::utils::env_util::get_env_var;
 use anyhow::Error;
+use std::time::Duration;
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -15,6 +16,8 @@ pub struct ApplicationSetting {
 
 #[derive(serde::Deserialize, Clone, Debug)]
 pub struct NexusSetting {
+    pub debounce: Duration,
+    pub max_debounce: Duration,
     pub moka_setting: MokaSetting,
 }
 
@@ -35,7 +38,11 @@ pub fn get_configuration() -> Result<Config, Error> {
             host: get_env_var("HOST", "localhost"),
             port: get_env_var("PORT", "8888").parse()?,
         },
-        nexus_setting: NexusSetting { moka_setting },
+        nexus_setting: NexusSetting {
+            debounce: Duration::from_secs(get_env_var("DEBOUNCE", "3").parse()?),
+            max_debounce: Duration::from_secs(get_env_var("MAX_DEBOUNCE", "5").parse()?),
+            moka_setting,
+        },
     };
     Ok(config)
 }

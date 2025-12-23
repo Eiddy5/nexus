@@ -1,8 +1,8 @@
 mod nexus;
-mod types;
+pub mod types;
 mod document;
-mod channel;
 pub mod connection;
+mod debounce;
 
 pub use nexus::Nexus;
 

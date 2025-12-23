@@ -5,6 +5,7 @@ mod core;
 mod errors;
 mod state;
 mod utils;
+mod extension;
 
 use crate::application::{Application, init_state};
 use crate::config::get_configuration;

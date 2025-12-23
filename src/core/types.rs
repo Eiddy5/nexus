@@ -1,29 +1,19 @@
-use std::pin::Pin;
-
-macro_rules! optional_async_method {
-    ($name:ident,$payload:ty) => {
-        fn $name(
-            &self,
-        ) -> Option<
-            fn(
-                $payload,
-            ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>>,
-        > {
-            None
-        }
-    };
-}
-
+use anyhow::Error;
+use async_trait::async_trait;
+#[async_trait]
 pub trait Extension: Send + Sync {
-    // 优先级
     fn priority(&self) -> Option<u8>;
-    // 扩展名称
     fn name(&self) -> Option<&str>;
-    optional_async_method!(on_connection, OnConnectionPayload);
-    optional_async_method!(on_create_document, OnCreateDocumentPayload);
-    optional_async_method!(on_load_document, OnLoadDocumentPayload);
-    optional_async_method!(after_load_document, AfterLoadDocumentPayload);
-    optional_async_method!(on_change, OnChangePayload);
+
+    async fn on_disconnect(&self, _payload: OnStoreDocumentPayload) -> anyhow::Result<()> {
+        Ok(())
+    }
+    async fn on_store_document(&self, _payload: OnStoreDocumentPayload) -> anyhow::Result<(), Error> {
+        Ok(())
+    }
+    async fn on_change(&self, payload: OnChangePayload) -> anyhow::Result<(), Error>{
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -36,4 +26,10 @@ pub struct OnLoadDocumentPayload {}
 
 pub struct AfterLoadDocumentPayload {}
 
-pub struct OnChangePayload {}
+#[derive(Debug, Clone)]
+pub struct OnChangePayload {
+    update: Vec<u8>,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct OnStoreDocumentPayload {}
