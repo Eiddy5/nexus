@@ -3,6 +3,24 @@ name = "nexus"
 version = "0.1.0"
 edition = "2024"
 
+
+[profile.dev]
+opt-level = 0
+debug = true
+debug-assertions = true
+overflow-checks = true
+incremental = true
+
+[profile.release]
+opt-level = 3
+debug = true
+debug-assertions = false
+overflow-checks = false
+lto = true
+codegen-units = 1
+panic = "abort"
+
+
 [dependencies]
 tokio = { version = "1.48.0", features = ["full"] }
 yrs = { path = "libs/yrs", features = ["sync"] }

@@ -115,7 +115,6 @@ pub trait Protocol {
     ) -> Result<Option<YMessage>, Error> {
         use crate::Transact;
         let update = awareness.doc().transact().encode_state_as_update_v1(&sv);
-        debug!("send diff update {:?}", update);
         Ok(Some(YMessage::Sync(SyncMessage::SyncStep2(update))))
     }
 
