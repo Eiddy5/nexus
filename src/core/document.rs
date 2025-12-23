@@ -1,4 +1,5 @@
 pub(crate) use crate::AwarenessRef;
+use crate::core::channel::Channel;
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::sync::broadcast::{Receiver, Sender};
@@ -8,11 +9,10 @@ use tracing::{debug, error};
 use yrs::encoding::write::Write;
 use yrs::sync::SyncMessage::SyncStep1;
 use yrs::sync::protocol::{MSG_SYNC, MSG_SYNC_UPDATE};
-use yrs::sync::{DefaultProtocol, Error, YMessage, Protocol, SyncMessage};
+use yrs::sync::{DefaultProtocol, Error, Protocol, SyncMessage, YMessage};
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::{Encode, Encoder, EncoderV1};
 use yrs::{ReadTxn, Transact, Update};
-use crate::core::channel::Channel;
 
 pub struct Document {
     awareness_sub: yrs::Subscription,
@@ -27,9 +27,7 @@ unsafe impl Send for Document {}
 unsafe impl Sync for Document {}
 
 impl Document {
-    pub async fn new(
-        awareness: AwarenessRef,
-    ) -> Self {
+    pub async fn new(awareness: AwarenessRef) -> Self {
         let (sender, receiver) = broadcast::channel(1024);
         let awareness_c = Arc::downgrade(&awareness);
         let mut lock = awareness.write().await;
@@ -43,7 +41,9 @@ impl Document {
                     encoder.write_buf(&u.update);
                     let msg = encoder.to_vec();
                     if let Err(_e) = sink.send(msg) {
-                        // current broadcast group is being closed
+                        error!(
+                            "failed to send sync message,current broadcast group is being closed"
+                        )
                     }
                 })
                 .unwrap()
@@ -134,12 +134,14 @@ impl Document {
             let sink = sink.clone();
             let mut receiver = self.sender.subscribe();
             tokio::spawn(async move {
-                while let Ok(msg) = receiver.recv().await {
+                while let Ok(update) = receiver.recv().await {
                     let mut sink = sink.lock().await;
-                    let vec = msg.clone();
-                    if let Err(e) = sink.send(msg).await {
+                    let vec = update.clone();
+                    if let Err(e) = sink.send(update).await {
                         debug!("broadcast failed to sent sync message {:?}", vec);
                         return Err(Error::Other(Box::new(e)));
+                    }else {
+                        debug!("broadcast sent sync message {:?}", vec)
                     }
                 }
                 Ok(())

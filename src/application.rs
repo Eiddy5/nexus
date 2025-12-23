@@ -1,5 +1,5 @@
-use crate::config::Config;
-use crate::core::{Nexus, NexusSetting};
+use crate::config::{Config, NexusSetting};
+use crate::core::{Nexus};
 use crate::state::AppState;
 use anyhow::Error;
 use axum::Router;
@@ -12,8 +12,8 @@ use futures_util::StreamExt;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tower_http::trace::TraceLayer;
-use tracing::{debug, error, info};
-use crate::core::conn::{AxumSink, AxumStream};
+use tracing::{debug, info};
+use crate::core::connection::{AxumSink, AxumStream};
 
 pub struct Application {
     listener: TcpListener,
@@ -64,7 +64,6 @@ async fn ws_handler(
 ) -> impl IntoResponse {
     let nexus = state.nexus.clone();
     let document = nexus.get_or_init_document(&doc_id).await;
-    info!("connecting to doc: {}", doc_id);
     ws.on_upgrade(move |socket: WebSocket| async move {
         let (sink, stream) = socket.split();
         let sink = Arc::new(Mutex::new(AxumSink::from(sink)));
@@ -78,18 +77,14 @@ async fn ws_handler(
 }
 
 pub async fn init_state(config: &Config) -> Result<AppState, Error> {
-    let nexus = get_nexus();
+    let nexus = get_nexus(config.nexus_setting.clone());
     Ok(AppState {
         config: Arc::new(config.clone()),
         nexus: Arc::new(nexus),
     })
 }
 
-fn get_nexus() -> Nexus {
-    let setting = NexusSetting {
-        capacity: 0,
-        time_to_idle: 0,
-    };
-    info!("nexus setting: {:?}", setting);
-    Nexus::new(&setting)
+fn get_nexus(nexus_setting: NexusSetting) -> Nexus {
+    info!("nexus setting: {:?}", nexus_setting);
+    Nexus::new(&nexus_setting)
 }

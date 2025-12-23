@@ -19,7 +19,7 @@ pub type AwarenessRef = Arc<RwLock<yrs::sync::Awareness>>;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
-    let log_level = get_env_var("LOG_LEVEL", "debug");
+    let log_level = get_env_var("LOG_LEVEL", "info");
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
         .with(tracing_subscriber::EnvFilter::new(log_level))
