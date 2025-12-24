@@ -11,7 +11,7 @@ pub trait Extension: Send + Sync {
     async fn on_store_document(&self, _payload: OnStoreDocumentPayload) -> anyhow::Result<(), Error> {
         Ok(())
     }
-    async fn on_change(&self, payload: OnChangePayload) -> anyhow::Result<(), Error>{
+    async fn on_change(&self, payload: ChangePayload) -> anyhow::Result<(), Error>{
         Ok(())
     }
 }
@@ -27,8 +27,9 @@ pub struct OnLoadDocumentPayload {}
 pub struct AfterLoadDocumentPayload {}
 
 #[derive(Debug, Clone)]
-pub struct OnChangePayload {
-    update: Vec<u8>,
+pub struct ChangePayload {
+    pub doc_id: String,
+    pub update: Vec<u8>,
 }
 
 #[derive(Copy, Clone, Debug)]

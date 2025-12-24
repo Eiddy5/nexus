@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::{Mutex, broadcast};
 use tokio::task::JoinHandle;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 use yrs::encoding::write::Write;
 use yrs::sync::protocol::{MSG_SYNC, MSG_SYNC_UPDATE};
 use yrs::sync::{DefaultProtocol, Error, Protocol, SyncMessage, YMessage};
@@ -14,8 +14,7 @@ use yrs::updates::encoder::{Encode, Encoder, EncoderV1};
 use yrs::{ReadTxn, Transact, Update};
 
 pub struct Document {
-    awareness_sub: yrs::Subscription,
-    doc_sub: yrs::Subscription,
+    observer_subs: Arc<Mutex<Vec<yrs::Subscription>>>,
     awareness_ref: AwarenessRef,
     sender: Sender<Vec<u8>>,
     receiver: Receiver<Vec<u8>>,
@@ -29,10 +28,10 @@ impl Document {
     pub async fn new(awareness: AwarenessRef) -> Self {
         let (sender, receiver) = broadcast::channel(1024);
         let awareness_c = Arc::downgrade(&awareness);
-        let mut lock = awareness.write().await;
+        let lock = awareness.read().await;
         let sink = sender.clone();
         let doc_sub = {
-            lock.doc_mut()
+            lock.doc()
                 .observe_update_v1(move |_txn, u| {
                     let mut encoder = EncoderV1::new();
                     encoder.write_var(MSG_SYNC);
@@ -87,8 +86,7 @@ impl Document {
             awareness_updater,
             sender,
             receiver,
-            awareness_sub,
-            doc_sub,
+            observer_subs: Arc::new(Mutex::new(vec![awareness_sub, doc_sub])),
         }
     }
 
@@ -150,15 +148,11 @@ impl Document {
             tokio::spawn(async move {
                 while let Some(msg) = stream.next().await {
                     let msg = YMessage::decode_v1(&msg.map_err(|e| Error::Other(Box::new(e)))?)?;
-                    let reply = Self::handle_msg(&protocol, &awareness, msg).await?;
-                    match reply {
-                        None => {}
-                        Some(reply) => {
-                            let mut sink = sink.lock().await;
-                            sink.send(reply.encode_v1())
-                                .await
-                                .map_err(|e| Error::Other(Box::new(e)))?;
-                        }
+                    if let Some(reply) = Self::handle_msg(&protocol, &awareness, msg).await? {
+                        let mut sink = sink.lock().await;
+                        sink.send(reply.encode_v1())
+                            .await
+                            .map_err(|e| Error::Other(Box::new(e)))?;
                     }
                 }
                 Ok(())
@@ -175,20 +169,17 @@ impl Document {
             let awareness_update = self.awareness().read().await.update().unwrap();
             (sv, awareness_update)
         };
-        let mut sink = sink.lock().await;
-        let sync = YMessage::Sync(SyncMessage::SyncStep1(sv));
-        self.sender
-            .send(sync.encode_v1())
-            .map_err(|e| Error::Other(Box::new(e)))
-            .unwrap();
-        sink.send(sync.encode_v1())
-            .await
-            .map_err(|e| Error::Other(Box::new(e)))
-            .unwrap();
-        sink.send(YMessage::Awareness(awareness).encode_v1())
-            .await
-            .map_err(|e| Error::Other(Box::new(e)))
-            .unwrap();
+        {
+            let mut sink = sink.lock().await;
+            sink.send(YMessage::Sync(SyncMessage::SyncStep1(sv)).encode_v1())
+                .await
+                .map_err(|e| Error::Other(Box::new(e)))
+                .unwrap();
+            sink.send(YMessage::Awareness(awareness).encode_v1())
+                .await
+                .map_err(|e| Error::Other(Box::new(e)))
+                .unwrap();
+        }
         Connection::new(sink_task, stream_task)
     }
 
@@ -205,14 +196,12 @@ impl Document {
                     result
                 }
                 SyncMessage::SyncStep2(update) => {
-                    let mut awareness = awareness.write().await;
-                    let update = Update::decode_v1(&update)?;
-                    protocol.handle_sync_step2(&mut *awareness, update)
+                    Self::handle_update(awareness, protocol, update).await;
+                    Ok(None)
                 }
                 SyncMessage::Update(update) => {
-                    let mut awareness = awareness.write().await;
-                    let update = Update::decode_v1(&update)?;
-                    protocol.handle_sync_step2(&mut *awareness, update)
+                    Self::handle_update(awareness, protocol, update).await;
+                    Ok(None)
                 }
             },
             YMessage::Auth(deny_reason) => {
@@ -230,6 +219,36 @@ impl Document {
             YMessage::Custom(tag, data) => {
                 let mut awareness = awareness.write().await;
                 protocol.missing_handle(&mut *awareness, tag, data)
+            }
+        }
+    }
+
+    pub async fn on_update<F>(&self, callback: F)
+    where
+        F: Fn(Vec<u8>) + Send  + 'static + Sync,
+    {
+        let lock = self.awareness().read().await;
+        let sub = {
+            lock.doc()
+                .observe_update_v1(move |_txn, u| {
+                    callback(u.update.clone())
+                })
+                .unwrap()
+        };
+        info!("回调函数注册");
+        drop(lock);
+        self.observer_subs.lock().await.push(sub);
+    }
+    async fn handle_update<P: Protocol>(awareness: &AwarenessRef, protocol: &P, update: Vec<u8>) {
+        let mut awareness = awareness.write().await;
+        match Update::decode_v1(&update) {
+            Ok(update) => {
+                let _ = protocol
+                    .handle_sync_step2(&mut *awareness, update)
+                    .map_err(|e| error!("handle_sync_step2 failed {}", e));
+            }
+            Err(e) => {
+                error!("decode_update failed {}", e)
             }
         }
     }

@@ -66,7 +66,6 @@ async fn ws_handler(
         nexus.handle_connection(socket, &doc_id).await;
     })
 }
-
 pub async fn init_state(config: &Config) -> Result<AppState, Error> {
     let nexus = get_nexus(config.nexus_setting.clone());
     Ok(AppState {
@@ -82,3 +81,4 @@ fn get_nexus(nexus_setting: NexusSetting) -> Nexus {
     ];
     Nexus::new(&nexus_setting, extensions)
 }
+
