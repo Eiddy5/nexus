@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast::{Sender};
 use tokio::sync::{Mutex, broadcast};
 use tokio::task::JoinHandle;
-use tracing::{debug, error};
+use tracing::{error};
 use yrs::encoding::write::Write;
 use yrs::sync::protocol::{MSG_SYNC, MSG_SYNC_UPDATE};
 use yrs::sync::{DefaultProtocol, Error, Protocol, SyncMessage, YMessage};
@@ -127,7 +127,7 @@ impl Document {
                     let mut sink = sink.lock().await;
                     let vec = update.clone();
                     if let Err(e) = sink.send(update).await {
-                        debug!("broadcast failed to sent sync message {:?}", vec);
+                        error!("broadcast failed to sent sync message {:?}", vec);
                         return Err(Error::Other(Box::new(e)));
                     }
                 }
