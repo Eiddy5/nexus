@@ -18,7 +18,7 @@ clean:
 
 rebuild: clean build
 
-docker-build: release
+docker-build:
 	docker build -t $(IMAGE):$(VERSION) .
 	@awk -F. '{ $$3++ } 1' OFS=. VERSION > VERSION.tmp && mv VERSION.tmp VERSION
 	@echo "use image \"$(IMAGE):$(VERSION)\""

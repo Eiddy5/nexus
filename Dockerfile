@@ -11,11 +11,10 @@ FROM harbor.jinqidongli.com/library/debian:bookworm-slim
 
 WORKDIR /app
 
+EXPOSE 8888
+
 COPY --from=builder /app/target/release/nexus /app/nexus
 
 COPY .env /app/.env
-
-ENV RUST_LOG=info
-ENV LOG_LEVEL=info
 
 CMD ["./nexus"]
