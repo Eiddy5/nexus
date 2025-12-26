@@ -1,18 +1,19 @@
 use crate::config::{Config, NexusSetting};
-use crate::core::{ Nexus};
+use crate::core::types::Extension;
+use crate::core::Nexus;
+use crate::extension::PostgresExtension;
 use crate::state::AppState;
+use crate::utils::env_util::{get_env_var, get_env_var_opt};
 use anyhow::Error;
-use axum::Router;
 use axum::extract::ws::WebSocket;
 use axum::extract::{Path, State, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::get;
+use axum::Router;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
-use tracing::{info};
-use crate::core::types::Extension;
-use crate::extension::store::KVStoreExtension;
+use tracing::info;
 
 pub struct Application {
     listener: TcpListener,
@@ -76,9 +77,16 @@ pub async fn init_state(config: &Config) -> Result<AppState, Error> {
 
 fn get_nexus(nexus_setting: NexusSetting) -> Nexus {
     info!("nexus setting: {:?}", nexus_setting);
-    let extensions:Vec<Arc<dyn Extension>> = vec![
-        Arc::new(KVStoreExtension::new())
-    ];
+    let mut extensions: Vec<Arc<dyn Extension>> = vec![];
+
+    let extension = PostgresExtension::new(
+        get_env_var("PGHOST", "localhost:5432"),
+        get_env_var("PGPORT", "5432"),
+        get_env_var("PGUSER","postgres"),
+        get_env_var("PGPASSWORD","postgres"),
+        get_env_var("PGDATABASE","postgres")
+    );
+    extensions.push(Arc::new(extension));
+
     Nexus::new(&nexus_setting, extensions)
 }
-

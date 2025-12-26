@@ -305,7 +305,7 @@ pub trait Observable: AsRef<Branch> {
     /// Provided key may be used later to unsubscribe from the event.
     fn observe_with<K, F>(&self, key: K, f: F)
     where
-        K: Into<Origin>,
+        K: Into<Origin>,        
         F: Fn(&TransactionMut, &Self::Event) + Send + Sync + 'static,
         Event: AsRef<Self::Event>,
     {

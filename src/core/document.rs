@@ -2,10 +2,10 @@ pub(crate) use crate::AwarenessRef;
 use crate::core::connection::Connection;
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
-use tokio::sync::broadcast::{Receiver, Sender};
+use tokio::sync::broadcast::{Sender};
 use tokio::sync::{Mutex, broadcast};
 use tokio::task::JoinHandle;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 use yrs::encoding::write::Write;
 use yrs::sync::protocol::{MSG_SYNC, MSG_SYNC_UPDATE};
 use yrs::sync::{DefaultProtocol, Error, Protocol, SyncMessage, YMessage};
@@ -14,19 +14,16 @@ use yrs::updates::encoder::{Encode, Encoder, EncoderV1};
 use yrs::{ReadTxn, Transact, Update};
 
 pub struct Document {
+    pub doc_id:String,
     observer_subs: Arc<Mutex<Vec<yrs::Subscription>>>,
     awareness_ref: AwarenessRef,
     sender: Sender<Vec<u8>>,
-    receiver: Receiver<Vec<u8>>,
     awareness_updater: JoinHandle<()>,
 }
 
-unsafe impl Send for Document {}
-unsafe impl Sync for Document {}
-
 impl Document {
-    pub async fn new(awareness: AwarenessRef) -> Self {
-        let (sender, receiver) = broadcast::channel(1024);
+    pub async fn new(doc_id: String, awareness: AwarenessRef) -> Self {
+        let (sender, _receiver) = broadcast::channel(1024);
         let awareness_c = Arc::downgrade(&awareness);
         let lock = awareness.read().await;
         let sink = sender.clone();
@@ -82,10 +79,10 @@ impl Document {
             }
         });
         Document {
+            doc_id,
             awareness_ref: awareness,
             awareness_updater,
             sender,
-            receiver,
             observer_subs: Arc::new(Mutex::new(vec![awareness_sub, doc_sub])),
         }
     }
@@ -94,11 +91,6 @@ impl Document {
         &self.awareness_ref
     }
 
-    pub fn check_and_drop(&self) {
-        if self.receiver.is_empty() && self.sender.is_empty() {
-            self.awareness_updater.abort();
-        }
-    }
 
     pub async fn subscribe<Sink, Stream, E>(
         &self,
@@ -235,7 +227,6 @@ impl Document {
                 })
                 .unwrap()
         };
-        info!("回调函数注册");
         drop(lock);
         self.observer_subs.lock().await.push(sub);
     }

@@ -1,5 +1,4 @@
 mod application;
-mod backup;
 mod config;
 mod core;
 mod errors;
