@@ -1,12 +1,11 @@
 use crate::core::types::{Extension, OnLoadDocumentPayload, OnStoreDocumentPayload};
-use crate::extension::DatabaseExtension;
 use anyhow::Error;
 use async_trait::async_trait;
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::sync::Arc;
 use tokio::sync::OnceCell;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 use yrs::updates::decoder::Decode;
 use yrs::{Transact, Update};
 
@@ -55,9 +54,7 @@ impl PostgresExtension {
             })
             .await
     }
-}
 
-impl DatabaseExtension for PostgresExtension {
     async fn fetch(&self, doc_id: &str) -> Result<Vec<u8>, Error> {
         let pool = match self.get_pool().await {
             Ok(p) => p,
@@ -106,11 +103,11 @@ impl DatabaseExtension for PostgresExtension {
              ON CONFLICT (id)
              DO UPDATE SET data = $2",
         )
-        .bind(doc_id)
-        .bind(&state)
-        .execute(pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("存储文档失败: {}", e))?;
+            .bind(doc_id)
+            .bind(&state)
+            .execute(pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("存储文档失败: {}", e))?;
 
         debug!(
             "[PostgresExtension] 文档 {} 存储成功，影响行数: {}",
@@ -119,6 +116,7 @@ impl DatabaseExtension for PostgresExtension {
         );
         Ok(())
     }
+    
 }
 
 #[async_trait]
