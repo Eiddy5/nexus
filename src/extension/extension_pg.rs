@@ -65,7 +65,7 @@ impl PostgresExtension {
         };
 
         let result =
-            sqlx::query_scalar::<_, Vec<u8>>("SELECT data FROM public.doc_articles WHERE id = $1")
+            sqlx::query_scalar::<_, Vec<u8>>("SELECT state_vector FROM public.doc_articles WHERE id = $1")
                 .bind(doc_id)
                 .fetch_optional(pool)
                 .await
@@ -98,10 +98,10 @@ impl PostgresExtension {
 
         // 插入或更新文档状态（使用 UPSERT）
         let result = sqlx::query(
-            "INSERT INTO public.doc_articles (id, data)
+            "INSERT INTO public.doc_articles (id, state_vector)
              VALUES ($1, $2)
              ON CONFLICT (id)
-             DO UPDATE SET data = $2",
+             DO UPDATE SET state_vector = $2",
         )
             .bind(doc_id)
             .bind(&state)
