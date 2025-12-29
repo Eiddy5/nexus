@@ -2,7 +2,6 @@ use std::sync::Arc;
 use anyhow::Error;
 use async_trait::async_trait;
 use serde_json::Value;
-use uuid::Uuid;
 use crate::core::document::Document;
 
 #[async_trait]
@@ -69,8 +68,7 @@ pub struct OnStoreDocumentPayload {
 
 #[derive(Clone, Debug)]
 pub struct HookContext {
-    pub document_name: String,
-    pub socket_id: Uuid,
+    pub doc_id: String,
     pub read_only: bool,
     pub authenticated: bool,
     pub token: Option<String>,

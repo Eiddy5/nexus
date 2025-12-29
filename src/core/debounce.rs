@@ -3,7 +3,6 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
-use tracing::debug;
 
 pub struct Debouncer {
 	timers: Arc<Mutex<HashMap<String, (Instant, tokio::task::JoinHandle<()>)>>>,

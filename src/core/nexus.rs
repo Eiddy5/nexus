@@ -12,7 +12,7 @@ use moka::future::Cache;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 use uuid::Uuid;
 use yrs::sync::Awareness;
 use yrs::{Doc, ReadTxn, StateVector, Transact};
@@ -127,10 +127,9 @@ impl Nexus {
     }
 
     pub async fn handle_connection(&self, socket: WebSocket, doc_id: &str) {
-        let document_name = doc_id.to_string();
+        let doc_id = doc_id.to_string();
         let mut context = HookContext {
-            document_name: document_name.clone(),
-            socket_id: Uuid::new_v4(),
+            doc_id: doc_id.clone(),
             read_only: false,
             authenticated: false,
             token: None,
@@ -158,13 +157,13 @@ impl Nexus {
 
         if !self.authorization(&context).await.unwrap_or(false) {
             let _ = self
-                .disconnect(doc_id, &context)
+                .disconnect(&doc_id, &context)
                 .await
                 .map_err(|e| error!("disconnect error: {:?}", e));
             return;
         }
         context.authenticated = true;
-        let document = self.get_or_init_document(&document_name).await;
+        let document = self.get_or_init_document(&doc_id).await;
         let (sink, stream) = socket.split();
         let sink = Arc::new(Mutex::new(AxumSink::from(sink)));
         let stream = AxumStream::from(stream);
@@ -172,11 +171,11 @@ impl Nexus {
         match connection.completed().await {
             Ok(_) => {
                 debug!("客户端连接正常关闭");
-                let _ = self.disconnect(&document_name, &context).await;
+                let _ = self.disconnect(&doc_id, &context).await;
             }
             Err(e) => {
                 error!("客户端连接异常关闭: {:?}", e);
-                let _ = self.disconnect(&document_name, &context).await;
+                let _ = self.disconnect(&doc_id, &context).await;
             }
         }
     }
