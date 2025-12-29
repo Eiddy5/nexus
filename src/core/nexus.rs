@@ -15,7 +15,6 @@ use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, warn};
 use uuid::Uuid;
 use yrs::sync::Awareness;
-use yrs::updates::encoder::Encode;
 use yrs::{Doc, ReadTxn, StateVector, Transact};
 
 #[derive(Clone)]
@@ -104,7 +103,6 @@ impl Nexus {
                             state,
                         });
                         
-                        // 并发执行所有扩展（使用 Arc 避免 clone Vec<u8>）
                         let tasks: Vec<_> = extensions
                             .iter()
                             .map(|ext| {
@@ -119,7 +117,6 @@ impl Nexus {
                             })
                             .collect();
                         
-                        // 等待所有扩展完成
                         for task in tasks {
                             let _ = task.await;
                         }
@@ -139,7 +136,6 @@ impl Nexus {
             token: None,
         };
 
-        // 并发执行 on_connect（不影响主流程）
         let extensions = self.extensions.clone();
         let ctx = context.clone();
         tokio::spawn(async move {
@@ -186,7 +182,6 @@ impl Nexus {
     }
 
     async fn disconnect(&self, doc_id: &str, context: &HookContext) -> Result<(), Error> {
-        // 并发执行所有扩展的 on_disconnect
         let tasks: Vec<_> = self.extensions
             .iter()
             .map(|ext| {
@@ -202,7 +197,6 @@ impl Nexus {
             })
             .collect();
         
-        // 等待所有扩展完成
         for task in tasks {
             let _ = task.await;
         }
@@ -210,10 +204,8 @@ impl Nexus {
     }
 
     async fn on_change(&self, payload: ChangePayload) -> Result<(), Error> {
-        // 使用 Arc 包装 payload，避免多次 clone Vec<u8>
         let payload = Arc::new(payload);
 
-        // 并发执行所有扩展的 on_change
         let tasks: Vec<_> = self.extensions
             .iter()
             .map(|ext| {
@@ -228,12 +220,10 @@ impl Nexus {
             })
             .collect();
 
-        // 等待所有扩展完成
         for task in tasks {
             let _ = task.await;
         }
 
-        // 触发防抖保存
         if let Some(document) = self.documents.get(&payload.doc_id).await {
             self.store_document(document.clone(), None).await;
         }
@@ -261,13 +251,11 @@ impl Nexus {
                 let document = Document::new(doc_id.clone(), awareness).await;
                 let document = Arc::new(document);
                 
-                // 1. 先加载文档数据（从数据库等）
                 let _ = self
                     .load_document(document.clone())
                     .await
                     .map_err(|e| error!("load_document error: {:?}", e));
                 
-                // 2. 加载完成后，再注册 on_update 回调（避免加载时触发保存）
                 document
                     .on_update(move |update| {
                         let payload = ChangePayload {
