@@ -1,5 +1,5 @@
 VERSION := $(shell cat VERSION)
-IMAGE := harbor.jinqidongli.com/x9-rust/y-server
+IMAGE := harbor.jinqidongli.com/x9-rust/yrs-server
 
 run:
 	RUST_LOG=info cargo run
