@@ -1,16 +1,18 @@
 use std::collections::HashMap;
 use std::future::Future;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
+use tracing::debug;
 
 pub struct Debouncer {
-	timers: Mutex<HashMap<String, (Instant, tokio::task::JoinHandle<()>)>>,
+	timers: Arc<Mutex<HashMap<String, (Instant, tokio::task::JoinHandle<()>)>>>,
 }
 
 impl Debouncer {
 	pub fn new() -> Self {
 		Self {
-			timers: Mutex::new(HashMap::new()),
+			timers: Arc::new(Mutex::new(HashMap::new())),
 		}
 	}
 
@@ -26,23 +28,37 @@ impl Debouncer {
 	{
 		let id = id.into();
 		let mut timers = self.timers.lock().await;
-		if let Some((start, handle)) = timers.remove(&id) {
-			if start.elapsed() < max_delay {
+		
+		let (should_execute_immediately, original_start) = if let Some((start, handle)) = timers.remove(&id) {
+			let elapsed = start.elapsed();
+			if elapsed >= max_delay {
 				handle.abort();
+				(true, start)
+			} else {
+				handle.abort();
+				(false, start) // 关键：保留原始的 start 时间
 			}
-		}
-
-		let start = Instant::now();
-		let handle = tokio::spawn(async move {
-			if delay.is_zero() {
-				f().await;
-				return;
-			}
-			tokio::time::sleep(delay).await;
+		} else {
+			(false, Instant::now())
+		};
+	
+		if should_execute_immediately {
+			drop(timers);
 			f().await;
-		});
-
-		timers.insert(id, (start, handle));
+		} else {
+			let timers_clone = self.timers.clone();
+			let id_clone = id.clone();
+			let handle = tokio::spawn(async move {
+				if !delay.is_zero() {
+					tokio::time::sleep(delay).await;
+				}
+				f().await;
+				let mut timers = timers_clone.lock().await;
+				timers.remove(&id_clone);
+			});
+	
+			timers.insert(id, (original_start, handle));
+		}
 	}
 }
 

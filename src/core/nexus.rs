@@ -12,7 +12,7 @@ use moka::future::Cache;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 use uuid::Uuid;
 use yrs::sync::Awareness;
 use yrs::updates::encoder::Encode;
@@ -28,12 +28,24 @@ pub struct Nexus {
 }
 
 impl Nexus {
-    pub fn new(setting: &NexusSetting, extensions: Vec<Arc<dyn Extension>>) -> Self {
+    pub fn new(setting: &NexusSetting, mut extensions: Vec<Arc<dyn Extension>>) -> Self {
         let moka = setting.clone().moka_setting;
         let channels = Cache::builder()
             .max_capacity(moka.capacity)
             .time_to_idle(Duration::from_secs(moka.time_to_idle))
             .build();
+        
+        // 按优先级排序扩展（优先级高的先执行）
+        extensions.sort_by(|a, b| {
+            let pa = a.priority().unwrap_or(100);
+            let pb = b.priority().unwrap_or(100);
+            pa.cmp(&pb)
+        });
+        
+        debug!("Extensions loaded: {:?}", extensions.iter().map(|e| {
+            format!("{}(priority={})", e.name().unwrap_or("unknown"), e.priority().unwrap_or(100))
+        }).collect::<Vec<_>>());
+        
         Nexus {
             documents: channels,
             debouncer: Arc::new(Debouncer::new()),
@@ -74,30 +86,47 @@ impl Nexus {
             self.debounce_delay
         };
         let max_delay = self.max_debounce;
-        debounce
-            .debounce(debounce_id, delay, max_delay, move || {
-                let extensions = extensions.clone();
-                async move {
-                    // 获取完整的文档状态作为 Update
-                    let state = document
-                        .awareness()
-                        .read()
-                        .await
-                        .doc()
-                        .transact()
-                        .encode_state_as_update_v1(&StateVector::default());
-                    let payload = OnStoreDocumentPayload {
-                        doc_id: doc_id.clone(),
-                        state: state.clone(),
-                    };
-                    for extension in &extensions {
-                        if let Err(e) = extension.on_store_document(payload.clone()).await {
-                            error!("on_store_document error: {:?}", e);
+        
+        tokio::spawn(async move {
+            debounce
+                .debounce(debounce_id, delay, max_delay, move || {
+                    let extensions = extensions.clone();
+                    async move {
+                        let state = document
+                            .awareness()
+                            .read()
+                            .await
+                            .doc()
+                            .transact()
+                            .encode_state_as_update_v1(&StateVector::default());
+                        let payload = Arc::new(OnStoreDocumentPayload {
+                            doc_id: doc_id.clone(),
+                            state,
+                        });
+                        
+                        // 并发执行所有扩展（使用 Arc 避免 clone Vec<u8>）
+                        let tasks: Vec<_> = extensions
+                            .iter()
+                            .map(|ext| {
+                                let payload = payload.clone();
+                                let ext = ext.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) = ext.on_store_document((*payload).clone()).await {
+                                        error!("[{}] on_store_document error: {:?}", 
+                                            ext.name().unwrap_or("unknown"), e);
+                                    }
+                                })
+                            })
+                            .collect();
+                        
+                        // 等待所有扩展完成
+                        for task in tasks {
+                            let _ = task.await;
                         }
                     }
-                }
-            })
-            .await
+                })
+                .await;
+        });
     }
 
     pub async fn handle_connection(&self, socket: WebSocket, doc_id: &str) {
@@ -110,11 +139,26 @@ impl Nexus {
             token: None,
         };
 
-        for extension in &self.extensions {
-            if let Err(e) = extension.on_connect(&context).await {
-                error!("on_connect error: {:?}", e);
+        // 并发执行 on_connect（不影响主流程）
+        let extensions = self.extensions.clone();
+        let ctx = context.clone();
+        tokio::spawn(async move {
+            let tasks: Vec<_> = extensions
+                .iter()
+                .map(|ext| {
+                    let ctx = ctx.clone();
+                    let ext = ext.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = ext.on_connect(&ctx).await {
+                            error!("[{}] on_connect error: {:?}", ext.name().unwrap_or("unknown"), e);
+                        }
+                    })
+                })
+                .collect();
+            for task in tasks {
+                let _ = task.await;
             }
-        }
+        });
 
         if !self.authorization(&context).await.unwrap_or(false) {
             let _ = self
@@ -142,18 +186,54 @@ impl Nexus {
     }
 
     async fn disconnect(&self, doc_id: &str, context: &HookContext) -> Result<(), Error> {
-        for extension in &self.extensions {
-            if let Err(e) = extension.on_disconnect(context).await {
-                error!("on_disconnect error for doc {}: {:?}", doc_id, e);
-            }
+        // 并发执行所有扩展的 on_disconnect
+        let tasks: Vec<_> = self.extensions
+            .iter()
+            .map(|ext| {
+                let ctx = context.clone();
+                let ext = ext.clone();
+                let doc_id = doc_id.to_string();
+                tokio::spawn(async move {
+                    if let Err(e) = ext.on_disconnect(&ctx).await {
+                        error!("[{}] on_disconnect error for doc {}: {:?}", 
+                            ext.name().unwrap_or("unknown"), doc_id, e);
+                    }
+                })
+            })
+            .collect();
+        
+        // 等待所有扩展完成
+        for task in tasks {
+            let _ = task.await;
         }
         Ok(())
     }
 
     async fn on_change(&self, payload: ChangePayload) -> Result<(), Error> {
-        for extension in &self.extensions {
-            extension.on_change(payload.clone()).await?;
+        // 使用 Arc 包装 payload，避免多次 clone Vec<u8>
+        let payload = Arc::new(payload);
+
+        // 并发执行所有扩展的 on_change
+        let tasks: Vec<_> = self.extensions
+            .iter()
+            .map(|ext| {
+                let payload = payload.clone();
+                let ext = ext.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = ext.on_change((*payload).clone()).await {
+                        error!("[{}] on_change error: {:?}",
+                            ext.name().unwrap_or("unknown"), e);
+                    }
+                })
+            })
+            .collect();
+
+        // 等待所有扩展完成
+        for task in tasks {
+            let _ = task.await;
         }
+
+        // 触发防抖保存
         if let Some(document) = self.documents.get(&payload.doc_id).await {
             self.store_document(document.clone(), None).await;
         }
@@ -179,6 +259,15 @@ impl Nexus {
                 let doc = Doc::new();
                 let awareness = Arc::new(RwLock::new(Awareness::new(doc)));
                 let document = Document::new(doc_id.clone(), awareness).await;
+                let document = Arc::new(document);
+                
+                // 1. 先加载文档数据（从数据库等）
+                let _ = self
+                    .load_document(document.clone())
+                    .await
+                    .map_err(|e| error!("load_document error: {:?}", e));
+                
+                // 2. 加载完成后，再注册 on_update 回调（避免加载时触发保存）
                 document
                     .on_update(move |update| {
                         let payload = ChangePayload {
@@ -194,11 +283,7 @@ impl Nexus {
                         });
                     })
                     .await;
-                let document = Arc::new(document);
-                let _ = self
-                    .load_document(document.clone())
-                    .await
-                    .map_err(|e| error!("load_document error: {:?}", e));
+                
                 document
             })
             .await
