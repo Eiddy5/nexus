@@ -5,19 +5,23 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::select;
 use tokio::task::JoinHandle;
+use tracing::info;
 use yrs::sync::Error;
 
 pub struct Connection {
+    doc_id:String,
     sink_task: JoinHandle<Result<(), Error>>,
     stream_task: JoinHandle<Result<(), Error>>,
 }
 
 impl Connection {
     pub fn new(
+        doc_id:String,
         sink_task: JoinHandle<Result<(), Error>>,
         stream_task: JoinHandle<Result<(), Error>>,
     ) -> Self {
         Self {
+            doc_id,
             sink_task,
             stream_task,
         }
@@ -28,6 +32,7 @@ impl Connection {
             r1 = self.sink_task => r1,
             r2 = self.stream_task => r2,
         };
+        info!("connection completed: {:?}",self.doc_id);
         res.map_err(|e| Error::Other(e.into()))?
     }
 

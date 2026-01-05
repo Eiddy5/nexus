@@ -2,10 +2,10 @@ pub(crate) use crate::AwarenessRef;
 use crate::core::connection::Connection;
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
-use tokio::sync::broadcast::{Sender};
+use tokio::sync::broadcast::Sender;
 use tokio::sync::{Mutex, broadcast};
 use tokio::task::JoinHandle;
-use tracing::{error};
+use tracing::{debug, error, info};
 use yrs::encoding::write::Write;
 use yrs::sync::protocol::{MSG_SYNC, MSG_SYNC_UPDATE};
 use yrs::sync::{DefaultProtocol, Error, Protocol, SyncMessage, YMessage};
@@ -14,7 +14,7 @@ use yrs::updates::encoder::{Encode, Encoder, EncoderV1};
 use yrs::{ReadTxn, Transact, Update};
 
 pub struct Document {
-    pub doc_id:String,
+    pub doc_id: String,
     observer_subs: Arc<Mutex<Vec<yrs::Subscription>>>,
     awareness_ref: AwarenessRef,
     sender: Sender<Vec<u8>>,
@@ -23,7 +23,7 @@ pub struct Document {
 
 impl Document {
     pub async fn new(doc_id: String, awareness: AwarenessRef) -> Self {
-        let (sender, _receiver) = broadcast::channel(1024);
+        let (sender, receiver) = broadcast::channel(1024);
         let awareness_c = Arc::downgrade(&awareness);
         let lock = awareness.read().await;
         let sink = sender.clone();
@@ -36,7 +36,7 @@ impl Document {
                     encoder.write_buf(&u.update);
                     let msg = encoder.to_vec();
                     if let Err(_e) = sink.send(msg) {
-                        error!(
+                        debug!(
                             "failed to send sync message,current broadcast group is being closed"
                         )
                     }
@@ -91,7 +91,6 @@ impl Document {
         &self.awareness_ref
     }
 
-
     pub async fn subscribe<Sink, Stream, E>(
         &self,
         sink: Arc<Mutex<Sink>>,
@@ -125,9 +124,8 @@ impl Document {
             tokio::spawn(async move {
                 while let Ok(update) = receiver.recv().await {
                     let mut sink = sink.lock().await;
-                    let vec = update.clone();
                     if let Err(e) = sink.send(update).await {
-                        error!("broadcast failed to sent sync message {:?}", vec);
+                        debug!("broadcast failed to sent sync message {:?}", e);
                         return Err(Error::Other(Box::new(e)));
                     }
                 }
@@ -172,7 +170,8 @@ impl Document {
                 .map_err(|e| Error::Other(Box::new(e)))
                 .unwrap();
         }
-        Connection::new(sink_task, stream_task)
+        info!(" {:} subscribed", self.doc_id);
+        Connection::new(self.doc_id.clone(), sink_task, stream_task)
     }
 
     async fn handle_msg<P: Protocol>(
@@ -215,16 +214,17 @@ impl Document {
         }
     }
 
+    /**
+     * Registers a callback function that is called whenever a document update is received.
+     */
     pub async fn on_update<F>(&self, callback: F)
     where
-        F: Fn(Vec<u8>) + Send  + 'static + Sync,
+        F: Fn(Vec<u8>) + Send + 'static + Sync,
     {
         let lock = self.awareness().read().await;
         let sub = {
             lock.doc()
-                .observe_update_v1(move |_txn, u| {
-                    callback(u.update.clone())
-                })
+                .observe_update_v1(move |_txn, u| callback(u.update.clone()))
                 .unwrap()
         };
         drop(lock);

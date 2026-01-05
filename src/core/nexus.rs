@@ -247,8 +247,7 @@ impl Nexus {
                 debug!("init document: {:}", doc_id);
                 let doc = Doc::new();
                 let awareness = Arc::new(RwLock::new(Awareness::new(doc)));
-                let document = Document::new(doc_id.clone(), awareness).await;
-                let document = Arc::new(document);
+                let document = Arc::new(Document::new(doc_id.clone(), awareness).await);
                 
                 let _ = self
                     .load_document(document.clone())
