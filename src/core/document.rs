@@ -8,10 +8,10 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, info};
 use yrs::encoding::write::Write;
 use yrs::sync::protocol::{MSG_SYNC, MSG_SYNC_UPDATE};
-use yrs::sync::{DefaultProtocol, Error, Protocol, SyncMessage, YMessage};
+use yrs::sync::{DefaultProtocol, Error, Protocol, SyncMessage};
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::{Encode, Encoder, EncoderV1};
-use yrs::{ReadTxn, Transact, Update};
+use yrs::{sync, ReadTxn, Transact, Update};
 
 pub struct Document {
     pub doc_id: String,
@@ -65,7 +65,7 @@ impl Document {
                     let awareness = awareness.read().await;
                     match awareness.update_with_clients(changed_clients) {
                         Ok(update) => {
-                            if let Err(_) = sink.send(YMessage::Awareness(update).encode_v1()) {
+                            if let Err(_) = sink.send(sync::Message::Awareness(update).encode_v1()) {
                                 error!("couldn't broadcast awareness update");
                             }
                         }
@@ -137,7 +137,7 @@ impl Document {
             let awareness = self.awareness().clone();
             tokio::spawn(async move {
                 while let Some(msg) = stream.next().await {
-                    let msg = YMessage::decode_v1(&msg.map_err(|e| Error::Other(Box::new(e)))?)?;
+                    let msg = sync::Message::decode_v1(&msg.map_err(|e| Error::Other(Box::new(e)))?)?;
                     if let Some(reply) = Self::handle_msg(&protocol, &awareness, msg).await? {
                         let mut sink = sink.lock().await;
                         sink.send(reply.encode_v1())
@@ -161,11 +161,11 @@ impl Document {
         };
         {
             let mut sink = sink.lock().await;
-            sink.send(YMessage::Sync(SyncMessage::SyncStep1(sv)).encode_v1())
+            sink.send(sync::Message::Sync(SyncMessage::SyncStep1(sv)).encode_v1())
                 .await
                 .map_err(|e| Error::Other(Box::new(e)))
                 .unwrap();
-            sink.send(YMessage::Awareness(awareness).encode_v1())
+            sink.send(sync::Message::Awareness(awareness).encode_v1())
                 .await
                 .map_err(|e| Error::Other(Box::new(e)))
                 .unwrap();
@@ -177,10 +177,10 @@ impl Document {
     async fn handle_msg<P: Protocol>(
         protocol: &P,
         awareness: &AwarenessRef,
-        msg: YMessage,
-    ) -> Result<Option<YMessage>, Error> {
+        msg: sync::Message,
+    ) -> Result<Option<sync::Message>, Error> {
         match msg {
-            YMessage::Sync(msg) => match msg {
+            sync::Message::Sync(msg) => match msg {
                 SyncMessage::SyncStep1(state_vector) => {
                     let awareness = awareness.read().await;
                     let result = protocol.handle_sync_step1(&*awareness, state_vector);
@@ -195,19 +195,19 @@ impl Document {
                     Ok(None)
                 }
             },
-            YMessage::Auth(deny_reason) => {
+            sync::Message::Auth(deny_reason) => {
                 let awareness = awareness.read().await;
                 protocol.handle_auth(&*awareness, deny_reason)
             }
-            YMessage::AwarenessQuery => {
+            sync::Message::AwarenessQuery => {
                 let awareness = awareness.read().await;
                 protocol.handle_awareness_query(&*awareness)
             }
-            YMessage::Awareness(update) => {
+            sync::Message::Awareness(update) => {
                 let mut awareness = awareness.write().await;
                 protocol.handle_awareness_update(&mut *awareness, update)
             }
-            YMessage::Custom(tag, data) => {
+            sync::Message::Custom(tag, data) => {
                 let mut awareness = awareness.write().await;
                 protocol.missing_handle(&mut *awareness, tag, data)
             }

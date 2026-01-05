@@ -61,13 +61,13 @@ pub trait Protocol {
             let update = awareness.update()?;
             (sv, update)
         };
-        YMessage::Sync(SyncMessage::SyncStep1(sv));
-        YMessage::Awareness(update).encode(encoder);
+        Message::Sync(SyncMessage::SyncStep1(sv));
+        Message::Awareness(update).encode(encoder);
         Ok(())
     }
 
     /// Y-sync protocol message handler.
-    fn handle(&self, awareness: &Awareness, data: &[u8]) -> Result<SmallVec<[YMessage; 1]>, Error> {
+    fn handle(&self, awareness: &Awareness, data: &[u8]) -> Result<SmallVec<[Message; 1]>, Error> {
         let mut decoder = DecoderV1::new(Cursor::new(data));
         let mut reader = MessageReader::new(&mut decoder);
         let mut responses = SmallVec::new();
@@ -80,29 +80,29 @@ pub trait Protocol {
         Ok(responses)
     }
 
-    /// Handles incoming y-sync [YMessage] within the context of current awareness structure.
+    /// Handles incoming y-sync [Message] within the context of current awareness structure.
     /// Returns an optional reply message that should be sent back to message sender.
     fn handle_message(
         &self,
         awareness: &Awareness,
-        message: YMessage,
-    ) -> Result<Option<YMessage>, Error> {
+        message: Message,
+    ) -> Result<Option<Message>, Error> {
         match message {
-            YMessage::Sync(SyncMessage::SyncStep1(state_vector)) => {
+            Message::Sync(SyncMessage::SyncStep1(state_vector)) => {
                 self.handle_sync_step1(awareness, state_vector)
             }
-            YMessage::Sync(SyncMessage::SyncStep2(update)) => {
+            Message::Sync(SyncMessage::SyncStep2(update)) => {
                 let update = Update::decode_v1(&update)?;
                 self.handle_sync_step2(awareness, update)
             }
-            YMessage::Sync(SyncMessage::Update(update)) => {
+            Message::Sync(SyncMessage::Update(update)) => {
                 let update = Update::decode_v1(&update)?;
                 self.handle_update(awareness, update)
             }
-            YMessage::Auth(deny_reason) => self.handle_auth(awareness, deny_reason),
-            YMessage::AwarenessQuery => self.handle_awareness_query(awareness),
-            YMessage::Awareness(update) => self.handle_awareness_update(awareness, update),
-            YMessage::Custom(tag, data) => self.missing_handle(awareness, tag, data),
+            Message::Auth(deny_reason) => self.handle_auth(awareness, deny_reason),
+            Message::AwarenessQuery => self.handle_awareness_query(awareness),
+            Message::Awareness(update) => self.handle_awareness_update(awareness, update),
+            Message::Custom(tag, data) => self.missing_handle(awareness, tag, data),
         }
     }
 
@@ -112,10 +112,10 @@ pub trait Protocol {
         &self,
         awareness: &Awareness,
         sv: StateVector,
-    ) -> Result<Option<YMessage>, Error> {
+    ) -> Result<Option<Message>, Error> {
         use crate::Transact;
         let update = awareness.doc().transact().encode_state_as_update_v1(&sv);
-        Ok(Some(YMessage::Sync(SyncMessage::SyncStep2(update))))
+        Ok(Some(Message::Sync(SyncMessage::SyncStep2(update))))
     }
 
     /// Handle reply for a sync-step-1 send from this replica previously. By default just apply
@@ -124,7 +124,7 @@ pub trait Protocol {
         &self,
         awareness: &Awareness,
         update: Update,
-    ) -> Result<Option<YMessage>, Error> {
+    ) -> Result<Option<Message>, Error> {
         use crate::Transact;
         let doc = awareness.doc();
         let mut txn = doc.transact_mut();
@@ -138,7 +138,7 @@ pub trait Protocol {
         &self,
         awareness: &Awareness,
         update: Update,
-    ) -> Result<Option<YMessage>, Error> {
+    ) -> Result<Option<Message>, Error> {
         self.handle_sync_step2(awareness, update)
     }
 
@@ -148,7 +148,7 @@ pub trait Protocol {
         &self,
         _awareness: &Awareness,
         deny_reason: Option<String>,
-    ) -> Result<Option<YMessage>, Error> {
+    ) -> Result<Option<Message>, Error> {
         if let Some(reason) = deny_reason {
             Err(Error::PermissionDenied { reason })
         } else {
@@ -158,9 +158,9 @@ pub trait Protocol {
 
     /// Returns an [AwarenessUpdate] which is a serializable representation of a current `awareness`
     /// instance.
-    fn handle_awareness_query(&self, awareness: &Awareness) -> Result<Option<YMessage>, Error> {
+    fn handle_awareness_query(&self, awareness: &Awareness) -> Result<Option<Message>, Error> {
         let update = awareness.update()?;
-        Ok(Some(YMessage::Awareness(update)))
+        Ok(Some(Message::Awareness(update)))
     }
 
     /// Reply to awareness query or just incoming [AwarenessUpdate], where current `awareness`
@@ -169,7 +169,7 @@ pub trait Protocol {
         &self,
         awareness: &Awareness,
         update: AwarenessUpdate,
-    ) -> Result<Option<YMessage>, Error> {
+    ) -> Result<Option<Message>, Error> {
         awareness.apply_update(update)?;
         Ok(None)
     }
@@ -181,7 +181,7 @@ pub trait Protocol {
         _awareness: &Awareness,
         tag: u8,
         _data: Vec<u8>,
-    ) -> Result<Option<YMessage>, Error> {
+    ) -> Result<Option<Message>, Error> {
         Err(Error::Unsupported(tag))
     }
 }
@@ -194,7 +194,7 @@ pub trait Protocol {
 pub trait AsyncProtocol {
     /// To be called whenever a new connection has been accepted. Returns a list of
     /// messages to be sent back to initiator.
-    async fn start<E>(&self, awareness: &Awareness) -> Result<SmallVec<[YMessage; 1]>, Error>
+    async fn start<E>(&self, awareness: &Awareness) -> Result<SmallVec<[Message; 1]>, Error>
     where
         E: Encoder,
     {
@@ -206,8 +206,8 @@ pub trait AsyncProtocol {
             (sv, update)
         };
         Ok(smallvec![
-            YMessage::Sync(SyncMessage::SyncStep1(sv)),
-            YMessage::Awareness(update),
+            Message::Sync(SyncMessage::SyncStep1(sv)),
+            Message::Awareness(update),
         ])
     }
 
@@ -216,7 +216,7 @@ pub trait AsyncProtocol {
         &self,
         awareness: &Awareness,
         data: &[u8],
-    ) -> Result<SmallVec<[YMessage; 1]>, Error> {
+    ) -> Result<SmallVec<[Message; 1]>, Error> {
         let mut decoder = DecoderV1::new(Cursor::new(data));
         let mut reader = MessageReader::new(&mut decoder);
         let mut responses = SmallVec::new();
@@ -229,29 +229,29 @@ pub trait AsyncProtocol {
         Ok(responses)
     }
 
-    /// Handles incoming y-sync [YMessage] within the context of current awareness structure.
+    /// Handles incoming y-sync [Message] within the context of current awareness structure.
     /// Returns an optional reply message that should be sent back to message sender.
     async fn handle_message(
         &self,
         awareness: &Awareness,
-        message: YMessage,
-    ) -> Result<Option<YMessage>, Error> {
+        message: Message,
+    ) -> Result<Option<Message>, Error> {
         match message {
-            YMessage::Sync(SyncMessage::SyncStep1(state_vector)) => {
+            Message::Sync(SyncMessage::SyncStep1(state_vector)) => {
                 self.handle_sync_step1(awareness, state_vector).await
             }
-            YMessage::Sync(SyncMessage::SyncStep2(update)) => {
+            Message::Sync(SyncMessage::SyncStep2(update)) => {
                 let update = Update::decode_v1(&update)?;
                 self.handle_sync_step2(awareness, update).await
             }
-            YMessage::Sync(SyncMessage::Update(update)) => {
+            Message::Sync(SyncMessage::Update(update)) => {
                 let update = Update::decode_v1(&update)?;
                 self.handle_update(awareness, update).await
             }
-            YMessage::Auth(deny_reason) => self.handle_auth(awareness, deny_reason).await,
-            YMessage::AwarenessQuery => self.handle_awareness_query(awareness).await,
-            YMessage::Awareness(update) => self.handle_awareness_update(awareness, update).await,
-            YMessage::Custom(tag, data) => self.missing_handle(awareness, tag, data).await,
+            Message::Auth(deny_reason) => self.handle_auth(awareness, deny_reason).await,
+            Message::AwarenessQuery => self.handle_awareness_query(awareness).await,
+            Message::Awareness(update) => self.handle_awareness_update(awareness, update).await,
+            Message::Custom(tag, data) => self.missing_handle(awareness, tag, data).await,
         }
     }
 
@@ -261,11 +261,11 @@ pub trait AsyncProtocol {
         &self,
         awareness: &Awareness,
         sv: StateVector,
-    ) -> Result<Option<YMessage>, Error> {
+    ) -> Result<Option<Message>, Error> {
         use crate::AsyncTransact;
         let txn = awareness.doc().transact().await;
         let update = txn.encode_state_as_update_v1(&sv);
-        Ok(Some(YMessage::Sync(SyncMessage::SyncStep2(update))))
+        Ok(Some(Message::Sync(SyncMessage::SyncStep2(update))))
     }
 
     /// Handle reply for a sync-step-1 send from this replica previously. By default just apply
@@ -274,7 +274,7 @@ pub trait AsyncProtocol {
         &self,
         awareness: &Awareness,
         update: Update,
-    ) -> Result<Option<YMessage>, Error> {
+    ) -> Result<Option<Message>, Error> {
         use crate::AsyncTransact;
         let doc = awareness.doc();
         let mut txn = doc.transact_mut().await;
@@ -288,7 +288,7 @@ pub trait AsyncProtocol {
         &self,
         awareness: &Awareness,
         update: Update,
-    ) -> Result<Option<YMessage>, Error> {
+    ) -> Result<Option<Message>, Error> {
         self.handle_sync_step2(awareness, update).await
     }
 
@@ -298,7 +298,7 @@ pub trait AsyncProtocol {
         &self,
         _awareness: &Awareness,
         deny_reason: Option<String>,
-    ) -> Result<Option<YMessage>, Error> {
+    ) -> Result<Option<Message>, Error> {
         if let Some(reason) = deny_reason {
             Err(Error::PermissionDenied { reason })
         } else {
@@ -311,9 +311,9 @@ pub trait AsyncProtocol {
     async fn handle_awareness_query(
         &self,
         awareness: &Awareness,
-    ) -> Result<Option<YMessage>, Error> {
+    ) -> Result<Option<Message>, Error> {
         let update = awareness.update()?;
-        Ok(Some(YMessage::Awareness(update)))
+        Ok(Some(Message::Awareness(update)))
     }
 
     /// Reply to awareness query or just incoming [AwarenessUpdate], where current `awareness`
@@ -322,7 +322,7 @@ pub trait AsyncProtocol {
         &self,
         awareness: &Awareness,
         update: AwarenessUpdate,
-    ) -> Result<Option<YMessage>, Error> {
+    ) -> Result<Option<Message>, Error> {
         awareness.apply_update(update)?;
         Ok(None)
     }
@@ -334,25 +334,25 @@ pub trait AsyncProtocol {
         _awareness: &Awareness,
         tag: u8,
         _data: Vec<u8>,
-    ) -> Result<Option<YMessage>, Error> {
+    ) -> Result<Option<Message>, Error> {
         Err(Error::Unsupported(tag))
     }
 }
 
-/// Tag id for [YMessage::Sync].
+/// Tag id for [Message::Sync].
 pub const MSG_SYNC: u8 = 0;
-/// Tag id for [YMessage::Awareness].
+/// Tag id for [Message::Awareness].
 pub const MSG_AWARENESS: u8 = 1;
-/// Tag id for [YMessage::Auth].
+/// Tag id for [Message::Auth].
 pub const MSG_AUTH: u8 = 2;
-/// Tag id for [YMessage::AwarenessQuery].
+/// Tag id for [Message::AwarenessQuery].
 pub const MSG_QUERY_AWARENESS: u8 = 3;
 
 pub const PERMISSION_DENIED: u8 = 0;
 pub const PERMISSION_GRANTED: u8 = 1;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub enum YMessage {
+pub enum Message {
     Sync(SyncMessage),
     Auth(Option<String>),
     AwarenessQuery,
@@ -360,14 +360,14 @@ pub enum YMessage {
     Custom(u8, Vec<u8>),
 }
 
-impl Encode for YMessage {
+impl Encode for Message {
     fn encode<E: Encoder>(&self, encoder: &mut E) {
         match self {
-            YMessage::Sync(msg) => {
+            Message::Sync(msg) => {
                 encoder.write_var(MSG_SYNC);
                 msg.encode(encoder);
             }
-            YMessage::Auth(reason) => {
+            Message::Auth(reason) => {
                 encoder.write_var(MSG_AUTH);
                 if let Some(reason) = reason {
                     encoder.write_var(PERMISSION_DENIED);
@@ -376,14 +376,14 @@ impl Encode for YMessage {
                     encoder.write_var(PERMISSION_GRANTED);
                 }
             }
-            YMessage::AwarenessQuery => {
+            Message::AwarenessQuery => {
                 encoder.write_var(MSG_QUERY_AWARENESS);
             }
-            YMessage::Awareness(update) => {
+            Message::Awareness(update) => {
                 encoder.write_var(MSG_AWARENESS);
                 encoder.write_buf(&update.encode_v1())
             }
-            YMessage::Custom(tag, data) => {
+            Message::Custom(tag, data) => {
                 encoder.write_u8(*tag);
                 encoder.write_buf(&data);
             }
@@ -391,18 +391,18 @@ impl Encode for YMessage {
     }
 }
 
-impl Decode for YMessage {
+impl Decode for Message {
     fn decode<D: Decoder>(decoder: &mut D) -> Result<Self, read::Error> {
         let tag: u8 = decoder.read_var()?;
         match tag {
             MSG_SYNC => {
                 let msg = SyncMessage::decode(decoder)?;
-                Ok(YMessage::Sync(msg))
+                Ok(Message::Sync(msg))
             }
             MSG_AWARENESS => {
                 let data = decoder.read_buf()?;
                 let update = AwarenessUpdate::decode_v1(data)?;
-                Ok(YMessage::Awareness(update))
+                Ok(Message::Awareness(update))
             }
             MSG_AUTH => {
                 let reason = if decoder.read_var::<u8>()? == PERMISSION_DENIED {
@@ -410,12 +410,12 @@ impl Decode for YMessage {
                 } else {
                     None
                 };
-                Ok(YMessage::Auth(reason))
+                Ok(Message::Auth(reason))
             }
-            MSG_QUERY_AWARENESS => Ok(YMessage::AwarenessQuery),
+            MSG_QUERY_AWARENESS => Ok(Message::AwarenessQuery),
             tag => {
                 let data = decoder.read_buf()?;
-                Ok(YMessage::Custom(tag, data.to_vec()))
+                Ok(Message::Custom(tag, data.to_vec()))
             }
         }
     }
@@ -519,10 +519,10 @@ impl<'a, D: Decoder> MessageReader<'a, D> {
 }
 
 impl<'a, D: Decoder> Iterator for MessageReader<'a, D> {
-    type Item = Result<YMessage, read::Error>;
+    type Item = Result<Message, read::Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match YMessage::decode(self.0) {
+        match Message::decode(self.0) {
             Ok(msg) => Some(Ok(msg)),
             Err(read::Error::EndOfBuffer(_)) => None,
             Err(error) => Some(Err(error)),
@@ -558,7 +558,7 @@ mod test {
         let protocol = crate::sync::DefaultProtocol;
         let state_vector = awareness1.doc().transact().state_vector();
         let sync_step1_msg =
-            crate::sync::YMessage::Sync(crate::sync::SyncMessage::SyncStep1(state_vector));
+            crate::sync::Message::Sync(crate::sync::SyncMessage::SyncStep1(state_vector));
 
         // 模拟同步过程 - 步骤2: 处理SyncStep1并生成SyncStep2响应
         let response = protocol
@@ -566,11 +566,11 @@ mod test {
             .unwrap();
 
         // 模拟同步过程 - 步骤3: 处理SyncStep2响应(这会触发回调)
-        if let Some(crate::sync::YMessage::Sync(crate::sync::SyncMessage::SyncStep2(update_data))) =
+        if let Some(crate::sync::Message::Sync(crate::sync::SyncMessage::SyncStep2(update_data))) =
             response
         {
             let sync_step2_msg =
-                crate::sync::YMessage::Sync(crate::sync::SyncMessage::SyncStep2(update_data));
+                crate::sync::Message::Sync(crate::sync::SyncMessage::SyncStep2(update_data));
             // 这个调用会触发回调函数
             protocol
                 .handle_message(&awareness2, sync_step2_msg)
@@ -594,27 +594,27 @@ mod test {
             .unwrap();
 
         let messages = [
-            crate::sync::YMessage::Sync(crate::sync::SyncMessage::SyncStep1(
+            crate::sync::Message::Sync(crate::sync::SyncMessage::SyncStep1(
                 awareness.doc().transact().state_vector(),
             )),
-            crate::sync::YMessage::Sync(crate::sync::SyncMessage::SyncStep2(
+            crate::sync::Message::Sync(crate::sync::SyncMessage::SyncStep2(
                 awareness
                     .doc()
                     .transact()
                     .encode_state_as_update_v1(&StateVector::default()),
             )),
-            crate::sync::YMessage::Awareness(awareness.update().unwrap()),
-            crate::sync::YMessage::Auth(Some(
+            crate::sync::Message::Awareness(awareness.update().unwrap()),
+            crate::sync::Message::Auth(Some(
                 "reason
             }"
                 .to_string(),
             )),
-            crate::sync::YMessage::AwarenessQuery,
+            crate::sync::Message::AwarenessQuery,
         ];
 
         for msg in messages {
             let encoded = msg.encode_v1();
-            let decoded = crate::sync::YMessage::decode_v1(&encoded)
+            let decoded = crate::sync::Message::decode_v1(&encoded)
                 .expect(&format!("failed to decode {:?}", msg));
             assert_eq!(decoded, msg);
         }
@@ -632,12 +632,12 @@ mod test {
 
         assert_eq!(
             reader.next().unwrap().unwrap(),
-            crate::sync::YMessage::Sync(crate::sync::SyncMessage::SyncStep1(StateVector::default()))
+            crate::sync::Message::Sync(crate::sync::SyncMessage::SyncStep1(StateVector::default()))
         );
 
         assert_eq!(
             reader.next().unwrap().unwrap(),
-            crate::sync::YMessage::Awareness(awareness.update().unwrap())
+            crate::sync::Message::Awareness(awareness.update().unwrap())
         );
 
         assert!(reader.next().is_none());
@@ -663,12 +663,12 @@ mod test {
 
         assert_eq!(
             result,
-            Some(crate::sync::YMessage::Sync(
+            Some(crate::sync::Message::Sync(
                 crate::sync::SyncMessage::SyncStep2(expected)
             ))
         );
 
-        if let Some(crate::sync::YMessage::Sync(crate::sync::SyncMessage::SyncStep2(u))) = result {
+        if let Some(crate::sync::Message::Sync(crate::sync::SyncMessage::SyncStep2(u))) = result {
             let result2 = protocol
                 .handle_sync_step2(&mut a2, Update::decode_v1(&u).unwrap())
                 .unwrap();
@@ -716,10 +716,10 @@ mod test {
 
         assert_eq!(
             result,
-            Some(crate::sync::YMessage::Awareness(a1.update().unwrap()))
+            Some(crate::sync::Message::Awareness(a1.update().unwrap()))
         );
 
-        if let Some(crate::sync::YMessage::Awareness(u)) = result {
+        if let Some(crate::sync::Message::Awareness(u)) = result {
             let result = protocol.handle_awareness_update(&a2, u).unwrap();
             assert!(result.is_none());
         }
