@@ -13,7 +13,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error};
-use uuid::Uuid;
 use yrs::sync::Awareness;
 use yrs::{Doc, ReadTxn, StateVector, Transact};
 
@@ -33,18 +32,28 @@ impl Nexus {
             .max_capacity(moka.capacity)
             .time_to_idle(Duration::from_secs(moka.time_to_idle))
             .build();
-        
+
         // 按优先级排序扩展（优先级高的先执行）
         extensions.sort_by(|a, b| {
             let pa = a.priority().unwrap_or(100);
             let pb = b.priority().unwrap_or(100);
             pa.cmp(&pb)
         });
-        
-        debug!("Extensions loaded: {:?}", extensions.iter().map(|e| {
-            format!("{}(priority={})", e.name().unwrap_or("unknown"), e.priority().unwrap_or(100))
-        }).collect::<Vec<_>>());
-        
+
+        debug!(
+            "Extensions loaded: {:?}",
+            extensions
+                .iter()
+                .map(|e| {
+                    format!(
+                        "{}(priority={})",
+                        e.name().unwrap_or("unknown"),
+                        e.priority().unwrap_or(100)
+                    )
+                })
+                .collect::<Vec<_>>()
+        );
+
         Nexus {
             documents: channels,
             debouncer: Arc::new(Debouncer::new()),
@@ -85,7 +94,7 @@ impl Nexus {
             self.debounce_delay
         };
         let max_delay = self.max_debounce;
-        
+
         tokio::spawn(async move {
             debounce
                 .debounce(debounce_id, delay, max_delay, move || {
@@ -100,23 +109,27 @@ impl Nexus {
                             .encode_state_as_update_v1(&StateVector::default());
                         let payload = Arc::new(OnStoreDocumentPayload {
                             doc_id: doc_id.clone(),
-                            state,
+                            state: Arc::new(state),
                         });
-                        
+
                         let tasks: Vec<_> = extensions
                             .iter()
                             .map(|ext| {
                                 let payload = payload.clone();
                                 let ext = ext.clone();
                                 tokio::spawn(async move {
-                                    if let Err(e) = ext.on_store_document((*payload).clone()).await {
-                                        error!("[{}] on_store_document error: {:?}", 
-                                            ext.name().unwrap_or("unknown"), e);
+                                    if let Err(e) = ext.on_store_document(&payload).await
+                                    {
+                                        error!(
+                                            "[{}] on_store_document error: {:?}",
+                                            ext.name().unwrap_or("unknown"),
+                                            e
+                                        );
                                     }
                                 })
                             })
                             .collect();
-                        
+
                         for task in tasks {
                             let _ = task.await;
                         }
@@ -127,7 +140,7 @@ impl Nexus {
     }
 
     pub async fn handle_connection(&self, socket: WebSocket, doc_id: &str) {
-        let doc_id = doc_id.to_string();
+        let doc_id: Arc<str> = Arc::from(doc_id);
         let mut context = HookContext {
             doc_id: doc_id.clone(),
             read_only: false,
@@ -145,7 +158,11 @@ impl Nexus {
                     let ext = ext.clone();
                     tokio::spawn(async move {
                         if let Err(e) = ext.on_connect(&ctx).await {
-                            error!("[{}] on_connect error: {:?}", ext.name().unwrap_or("unknown"), e);
+                            error!(
+                                "[{}] on_connect error: {:?}",
+                                ext.name().unwrap_or("unknown"),
+                                e
+                            );
                         }
                     })
                 })
@@ -180,22 +197,27 @@ impl Nexus {
         }
     }
 
-    async fn disconnect(&self, doc_id: &str, context: &HookContext) -> Result<(), Error> {
-        let tasks: Vec<_> = self.extensions
+    async fn disconnect(&self, doc_id: &Arc<str>, context: &HookContext) -> Result<(), Error> {
+        let tasks: Vec<_> = self
+            .extensions
             .iter()
             .map(|ext| {
                 let ctx = context.clone();
                 let ext = ext.clone();
-                let doc_id = doc_id.to_string();
+                let doc_id = doc_id.clone();
                 tokio::spawn(async move {
                     if let Err(e) = ext.on_disconnect(&ctx).await {
-                        error!("[{}] on_disconnect error for doc {}: {:?}", 
-                            ext.name().unwrap_or("unknown"), doc_id, e);
+                        error!(
+                            "[{}] on_disconnect error for doc {}: {:?}",
+                            ext.name().unwrap_or("unknown"),
+                            doc_id,
+                            e
+                        );
                     }
                 })
             })
             .collect();
-        
+
         for task in tasks {
             let _ = task.await;
         }
@@ -205,15 +227,19 @@ impl Nexus {
     async fn on_change(&self, payload: ChangePayload) -> Result<(), Error> {
         let payload = Arc::new(payload);
 
-        let tasks: Vec<_> = self.extensions
+        let tasks: Vec<_> = self
+            .extensions
             .iter()
             .map(|ext| {
                 let payload = payload.clone();
                 let ext = ext.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = ext.on_change((*payload).clone()).await {
-                        error!("[{}] on_change error: {:?}",
-                            ext.name().unwrap_or("unknown"), e);
+                    if let Err(e) = ext.on_change(&payload).await {
+                        error!(
+                            "[{}] on_change error: {:?}",
+                            ext.name().unwrap_or("unknown"),
+                            e
+                        );
                     }
                 })
             })
@@ -223,7 +249,7 @@ impl Nexus {
             let _ = task.await;
         }
 
-        if let Some(document) = self.documents.get(&payload.doc_id).await {
+        if let Some(document) = self.documents.get(payload.doc_id.as_ref()).await {
             self.store_document(document.clone(), None).await;
         }
         Ok(())
@@ -234,26 +260,26 @@ impl Nexus {
             document: document.clone(),
         };
         for extension in &self.extensions {
-            extension.on_load_document(payload.clone()).await?;
+            extension.on_load_document(&payload).await?;
         }
         Ok(())
     }
 
-    async fn get_or_init_document(&self, doc_id: &str) -> Arc<Document> {
-        let doc_id = doc_id.to_string();
+    async fn get_or_init_document(&self, doc_id: &Arc<str>) -> Arc<Document> {
+        let doc_id = doc_id.clone();
         let nexus = self.clone();
         self.documents
-            .get_with(doc_id.clone(), async move {
+            .get_with(doc_id.as_ref().to_string(), async move {
                 debug!("init document: {:}", doc_id);
                 let doc = Doc::new();
                 let awareness = Arc::new(RwLock::new(Awareness::new(doc)));
                 let document = Arc::new(Document::new(doc_id.clone(), awareness).await);
-                
+
                 let _ = self
                     .load_document(document.clone())
                     .await
                     .map_err(|e| error!("load_document error: {:?}", e));
-                
+
                 document
                     .on_update(move |update| {
                         let payload = ChangePayload {
@@ -269,7 +295,7 @@ impl Nexus {
                         });
                     })
                     .await;
-                
+
                 document
             })
             .await

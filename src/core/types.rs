@@ -22,16 +22,16 @@ pub trait Extension: Send + Sync {
 
     async fn on_store_document(
         &self,
-        _payload: OnStoreDocumentPayload,
+        _payload: &OnStoreDocumentPayload,
     ) -> anyhow::Result<(), Error> {
         Ok(())
     }
     
-    async fn on_load_document(&self, _payload: OnLoadDocumentPayload) -> Result<(), Error> {
+    async fn on_load_document(&self, _payload: &OnLoadDocumentPayload) -> Result<(), Error> {
         Ok(())
     }
 
-    async fn on_change(&self, _payload: ChangePayload) -> anyhow::Result<(), Error> {
+    async fn on_change(&self, _payload: &ChangePayload) -> anyhow::Result<(), Error> {
         Ok(())
     }
 }
@@ -44,21 +44,21 @@ pub struct OnLoadDocumentPayload {
 
 #[derive(Debug, Clone)]
 pub struct ChangePayload {
-    pub doc_id: String,
-    pub update: Vec<u8>,
+    pub doc_id: Arc<str>,
+    pub update: Arc<Vec<u8>>,
 }
 
 #[derive(Clone, Debug)]
 pub struct OnStoreDocumentPayload {
-    pub(crate) doc_id: String,
-    pub(crate) state: Vec<u8>,
+    pub(crate) doc_id: Arc<str>,
+    pub(crate) state: Arc<Vec<u8>>,
 }
 
 #[derive(Clone, Debug)]
 pub struct HookContext {
-    pub doc_id: String,
+    pub doc_id: Arc<str>,
     pub read_only: bool,
     pub authenticated: bool,
-    pub token: Option<String>,
+    pub token: Option<Arc<str>>,
 }
 

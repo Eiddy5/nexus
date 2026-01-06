@@ -14,16 +14,16 @@ use yrs::updates::encoder::{Encode, Encoder, EncoderV1};
 use yrs::{sync, ReadTxn, Transact, Update};
 
 pub struct Document {
-    pub doc_id: String,
+    pub doc_id: Arc<str>,
     observer_subs: Arc<Mutex<Vec<yrs::Subscription>>>,
     awareness_ref: AwarenessRef,
-    sender: Sender<Vec<u8>>,
+    sender: Sender<Arc<Vec<u8>>>,
     awareness_updater: JoinHandle<()>,
 }
 
 impl Document {
-    pub async fn new(doc_id: String, awareness: AwarenessRef) -> Self {
-        let (sender, receiver) = broadcast::channel(1024);
+    pub async fn new(doc_id: Arc<str>, awareness: AwarenessRef) -> Self {
+        let (sender, _receiver) = broadcast::channel(1024);
         let awareness_c = Arc::downgrade(&awareness);
         let lock = awareness.read().await;
         let sink = sender.clone();
@@ -34,7 +34,7 @@ impl Document {
                     encoder.write_var(MSG_SYNC);
                     encoder.write_var(MSG_SYNC_UPDATE);
                     encoder.write_buf(&u.update);
-                    let msg = encoder.to_vec();
+                    let msg = Arc::new(encoder.to_vec());
                     if let Err(_e) = sink.send(msg) {
                         debug!(
                             "failed to send sync message,current broadcast group is being closed"
@@ -65,7 +65,7 @@ impl Document {
                     let awareness = awareness.read().await;
                     match awareness.update_with_clients(changed_clients) {
                         Ok(update) => {
-                            if let Err(_) = sink.send(sync::Message::Awareness(update).encode_v1()) {
+                            if let Err(_) = sink.send(Arc::new(sync::Message::Awareness(update).encode_v1())) {
                                 error!("couldn't broadcast awareness update");
                             }
                         }
@@ -97,9 +97,9 @@ impl Document {
         stream: Stream,
     ) -> Connection
     where
-        Sink: SinkExt<Vec<u8>> + Send + Sync + Unpin + 'static,
+        Sink: SinkExt<Arc<Vec<u8>>> + Send + Sync + Unpin + 'static,
         Stream: StreamExt<Item = Result<Vec<u8>, E>> + Send + Sync + Unpin + 'static,
-        <Sink as futures_util::Sink<Vec<u8>>>::Error: std::error::Error + Send + Sync,
+        <Sink as futures_util::Sink<Arc<Vec<u8>>>>::Error: std::error::Error + Send + Sync,
         E: std::error::Error + Send + Sync + 'static,
     {
         self.subscribe_with(sink, stream, DefaultProtocol).await
@@ -112,9 +112,9 @@ impl Document {
         protocol: P,
     ) -> Connection
     where
-        Sink: SinkExt<Vec<u8>> + Send + Sync + Unpin + 'static,
+        Sink: SinkExt<Arc<Vec<u8>>> + Send + Sync + Unpin + 'static,
         Stream: StreamExt<Item = Result<Vec<u8>, E>> + Send + Sync + Unpin + 'static,
-        <Sink as futures_util::Sink<Vec<u8>>>::Error: std::error::Error + Send + Sync,
+        <Sink as futures_util::Sink<Arc<Vec<u8>>>>::Error: std::error::Error + Send + Sync,
         E: std::error::Error + Send + Sync + 'static,
         P: Protocol + Send + Sync + 'static,
     {
@@ -140,7 +140,7 @@ impl Document {
                     let msg = sync::Message::decode_v1(&msg.map_err(|e| Error::Other(Box::new(e)))?)?;
                     if let Some(reply) = Self::handle_msg(&protocol, &awareness, msg).await? {
                         let mut sink = sink.lock().await;
-                        sink.send(reply.encode_v1())
+                        sink.send(Arc::new(reply.encode_v1()))
                             .await
                             .map_err(|e| Error::Other(Box::new(e)))?;
                     }
@@ -161,11 +161,11 @@ impl Document {
         };
         {
             let mut sink = sink.lock().await;
-            sink.send(sync::Message::Sync(SyncMessage::SyncStep1(sv)).encode_v1())
+            sink.send(Arc::new(sync::Message::Sync(SyncMessage::SyncStep1(sv)).encode_v1()))
                 .await
                 .map_err(|e| Error::Other(Box::new(e)))
                 .unwrap();
-            sink.send(sync::Message::Awareness(awareness).encode_v1())
+            sink.send(Arc::new(sync::Message::Awareness(awareness).encode_v1()))
                 .await
                 .map_err(|e| Error::Other(Box::new(e)))
                 .unwrap();
@@ -219,12 +219,12 @@ impl Document {
      */
     pub async fn on_update<F>(&self, callback: F)
     where
-        F: Fn(Vec<u8>) + Send + 'static + Sync,
+        F: Fn(Arc<Vec<u8>>) + Send + 'static + Sync,
     {
         let lock = self.awareness().read().await;
         let sub = {
             lock.doc()
-                .observe_update_v1(move |_txn, u| callback(u.update.clone()))
+                .observe_update_v1(move |_txn, u| callback(Arc::new(u.update.clone())))
                 .unwrap()
         };
         drop(lock);

@@ -95,7 +95,7 @@ impl PostgresExtension {
         }
     }
 
-        async fn store(&self, doc_id: &str, state: Vec<u8>) -> Result<(), Error> {
+        async fn store(&self, doc_id: &str, state: &[u8]) -> Result<(), Error> {
             let pool = match self.get_pool().await {
                 Ok(p) => p,
                 Err(e) => {
@@ -112,7 +112,7 @@ impl PostgresExtension {
              DO UPDATE SET state_vector = $2",
             )
                 .bind(doc_id)
-                .bind(&state)
+                .bind(state)
                 .execute(pool)
                 .await
                 .map_err(|e| anyhow::anyhow!("存储文档失败: {}", e))?;
@@ -138,13 +138,13 @@ impl PostgresExtension {
 
         async fn on_store_document(
             &self,
-            payload: OnStoreDocumentPayload,
+            payload: &OnStoreDocumentPayload,
         ) -> anyhow::Result<(), Error> {
-            self.store(&payload.doc_id, payload.state).await?;
+            self.store(&payload.doc_id, &payload.state).await?;
             Ok(())
         }
 
-        async fn on_load_document(&self, payload: OnLoadDocumentPayload) -> Result<(), Error> {
+        async fn on_load_document(&self, payload: &OnLoadDocumentPayload) -> Result<(), Error> {
             let state = self.fetch(&payload.document.doc_id).await?;
 
             // 如果数据库中没有数据，直接返回

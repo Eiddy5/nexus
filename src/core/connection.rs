@@ -2,6 +2,7 @@ use axum::extract::ws::{Message, WebSocket};
 use futures_util::Stream;
 use futures_util::stream::{SplitSink, SplitStream};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::select;
 use tokio::task::JoinHandle;
@@ -9,14 +10,14 @@ use tracing::info;
 use yrs::sync::Error;
 
 pub struct Connection {
-    doc_id:String,
+    doc_id: Arc<str>,
     sink_task: JoinHandle<Result<(), Error>>,
     stream_task: JoinHandle<Result<(), Error>>,
 }
 
 impl Connection {
     pub fn new(
-        doc_id:String,
+        doc_id: Arc<str>,
         sink_task: JoinHandle<Result<(), Error>>,
         stream_task: JoinHandle<Result<(), Error>>,
     ) -> Self {
@@ -54,7 +55,7 @@ impl Into<SplitSink<WebSocket, Message>> for AxumSink {
     }
 }
 
-impl futures_util::Sink<Vec<u8>> for AxumSink {
+impl futures_util::Sink<Arc<Vec<u8>>> for AxumSink {
     type Error = Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -65,8 +66,8 @@ impl futures_util::Sink<Vec<u8>> for AxumSink {
         }
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: Vec<u8>) -> Result<(), Self::Error> {
-        if let Err(e) = Pin::new(&mut self.0).start_send(Message::binary(item)) {
+    fn start_send(mut self: Pin<&mut Self>, item: Arc<Vec<u8>>) -> Result<(), Self::Error> {
+        if let Err(e) = Pin::new(&mut self.0).start_send(Message::binary((*item).clone())) {
             Err(Error::Other(e.into()))
         } else {
             Ok(())
