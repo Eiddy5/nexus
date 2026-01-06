@@ -11,7 +11,7 @@ FROM harbor.jinqidongli.com/library/debian:bookworm-slim
 
 WORKDIR /app
 
-EXPOSE 8888
+EXPOSE 1234
 
 COPY --from=builder /app/target/release/nexus /app/nexus
 
