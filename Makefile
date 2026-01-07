@@ -24,4 +24,4 @@ docker-build:
 	@echo "use image \"$(IMAGE):$(ENV)-$(VERSION)\""
 
 docker-push: docker-build
-	docker push $(IMAGE):$(VERSION)
+	docker push $(IMAGE):$(ENV)-$(VERSION)
