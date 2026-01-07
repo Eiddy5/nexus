@@ -1,5 +1,6 @@
 VERSION := $(shell cat VERSION)
 IMAGE := harbor.jinqidongli.com/x9-rust/yrs-server
+ENV := dev
 
 run:
 	RUST_LOG=info cargo run
@@ -19,9 +20,9 @@ clean:
 rebuild: clean build
 
 docker-build:
-	docker build -t $(IMAGE):$(VERSION) .
+	docker build -t $(IMAGE):$(ENV)-$(VERSION) .
 	@awk -F. '{ $$3++ } 1' OFS=. VERSION > VERSION.tmp && mv VERSION.tmp VERSION
-	@echo "use image \"$(IMAGE):$(VERSION)\""
+	@echo "use image \"$(IMAGE):$(ENV)-$(VERSION)\""
 
 docker-push: docker-build
-	docker push $(IMAGE):$(VERSION)
+	docker push $(IMAGE):$(ENV)-$(VERSION)
