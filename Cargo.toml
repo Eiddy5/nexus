@@ -3,11 +3,6 @@ name = "nexus"
 version = "0.1.0"
 edition = "2024"
 
-[features]
-default = []
-debug = []
-
-
 [profile.dev]
 opt-level = 0
 debug = true
